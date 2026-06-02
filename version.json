@@ -1,0 +1,5 @@
+{
+  "version": "1.0.0",
+  "download_url": "https://github.com/v2matosevic/Talkty/releases/latest",
+  "release_notes": "Native macOS rebuild: Apple Silicon Metal transcription, menu-bar app, global hotkey, auto-paste."
+}

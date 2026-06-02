@@ -41,6 +41,11 @@ let package = Package(
             linkerSettings: whisperLink
         ),
         .executableTarget(
+            name: "Talkty",
+            dependencies: ["TalktyKit"],
+            path: "Sources/Talkty"
+        ),
+        .executableTarget(
             name: "smoke",
             dependencies: ["TalktyKit"],
             path: "Sources/smoke"

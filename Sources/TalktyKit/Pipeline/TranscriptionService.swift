@@ -2,7 +2,7 @@ import Foundation
 
 /// Orchestrates engine + post-processing into a final TranscriptionResult.
 /// Owns the WhisperEngine and the currently-loaded model.
-public final class TranscriptionService {
+public final class TranscriptionService: @unchecked Sendable {   // engine is NSLock-guarded
     public let engine = WhisperEngine()
     public private(set) var loadedModelId: String?
 
