@@ -1,0 +1,131 @@
+import AppKit
+import SwiftUI
+import TalktyKit
+
+/// Working state for the settings window: an editable draft of AppSettings plus
+/// the live mic test and the hotkey recorder.
+@MainActor
+final class SettingsViewModel: ObservableObject {
+    @Published var draft: AppSettings
+    @Published var inputDevices: [AudioDevice] = []
+
+    // Hotkey recorder
+    @Published var recordingHotkey = false
+    private var hotkeyMonitor: Any?
+
+    // Mic test
+    @Published var testing = false
+    @Published var testLevel: Float = 0
+    @Published var testStatus = ""
+    private let testCapture = AudioCaptureService()
+
+    // Vocabulary editors (comma-joined <-> [String])
+    @Published var vocabularyText: String
+    @Published var replacementRows: [ReplacementRow]
+
+    private let store: SettingsStore
+    private let onApply: () -> Void
+
+    struct ReplacementRow: Identifiable, Equatable {
+        let id = UUID()
+        var from: String
+        var to: String
+    }
+
+    init(store: SettingsStore, onApply: @escaping () -> Void) {
+        self.store = store
+        self.onApply = onApply
+        let s = store.settings
+        self.draft = s
+        self.vocabularyText = (s.customVocabulary ?? DefaultVocabulary.codingTerms).joined(separator: ", ")
+        self.replacementRows = (s.textReplacements ?? DefaultVocabulary.defaultReplacements)
+            .sorted { $0.key < $1.key }
+            .map { ReplacementRow(from: $0.key, to: $0.value) }
+        self.inputDevices = AudioDevices.inputDevices()
+    }
+
+    // MARK: Save / cancel
+
+    func save() {
+        draft.customVocabulary = vocabularyText
+            .split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        var dict: [String: String] = [:]
+        for row in replacementRows where !row.from.trimmingCharacters(in: .whitespaces).isEmpty {
+            dict[row.from] = row.to
+        }
+        draft.textReplacements = dict
+        store.replace(draft)
+        onApply()
+        stopTest()
+        stopRecordingHotkey()
+    }
+
+    func cancel() {
+        stopTest()
+        stopRecordingHotkey()
+    }
+
+    // MARK: Hotkey recorder (local monitor — no special permission while window is key)
+
+    func startRecordingHotkey() {
+        recordingHotkey = true
+        hotkeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            let mods = self.modifiers(from: event.modifierFlags)
+            // Require at least one modifier; ignore bare keys (e.g. plain Esc cancels recording).
+            if event.keyCode == 53 { self.stopRecordingHotkey(); return nil }   // Esc aborts capture
+            guard !mods.isEmpty else { return nil }
+            self.draft.hotkey = HotkeyConfig(keyCode: UInt32(event.keyCode), modifiers: mods)
+            self.stopRecordingHotkey()
+            return nil
+        }
+    }
+
+    func stopRecordingHotkey() {
+        recordingHotkey = false
+        if let m = hotkeyMonitor { NSEvent.removeMonitor(m); hotkeyMonitor = nil }
+    }
+
+    private func modifiers(from flags: NSEvent.ModifierFlags) -> HotkeyModifiers {
+        var m: HotkeyModifiers = []
+        if flags.contains(.command) { m.insert(.command) }
+        if flags.contains(.option) { m.insert(.option) }
+        if flags.contains(.control) { m.insert(.control) }
+        if flags.contains(.shift) { m.insert(.shift) }
+        return m
+    }
+
+    // MARK: Mic test
+
+    func toggleTest() { testing ? stopTest() : startTest() }
+
+    private func startTest() {
+        PermissionsService.requestMicrophone { [weak self] granted in
+            guard let self, granted else { self?.testStatus = "Microphone access needed"; return }
+            self.testCapture.onLevel = { [weak self] level in
+                guard let self else { return }
+                self.testLevel = level
+                let pct = Int(level * 100)
+                if level < 0.02 { self.testStatus = "No audio detected" }
+                else if level < 0.15 { self.testStatus = "Low level (\(pct)%)" }
+                else { self.testStatus = "Microphone OK — \(pct)%" }
+            }
+            let deviceID = self.draft.selectedMicrophoneId.flatMap { AudioDevices.device(forUID: $0)?.id }
+            do { try self.testCapture.start(deviceID: deviceID); self.testing = true; self.testStatus = "Listening…" }
+            catch { self.testStatus = "Couldn't start mic" }
+        }
+    }
+
+    private func stopTest() {
+        guard testing else { return }
+        _ = testCapture.stop()
+        testing = false
+        testLevel = 0
+    }
+
+    func resetVocabulary() {
+        vocabularyText = DefaultVocabulary.codingTerms.joined(separator: ", ")
+        replacementRows = DefaultVocabulary.defaultReplacements
+            .sorted { $0.key < $1.key }.map { ReplacementRow(from: $0.key, to: $0.value) }
+    }
+}

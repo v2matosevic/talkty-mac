@@ -40,13 +40,35 @@ private struct Placeholder: View {
     }
 }
 
+@MainActor
 final class SettingsWindowController {
-    private let controller: DarkWindowController
+    private let window: NSWindow
+    private let vm: SettingsViewModel
+    private let models = ModelManager()
+
     init(settings: SettingsStore, state: AppState, onApply: @escaping () -> Void) {
-        controller = DarkWindowController(title: "Settings", size: NSSize(width: 420, height: 720),
-                                          content: Placeholder(title: "Settings"))
+        vm = SettingsViewModel(store: settings, onApply: onApply)
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 720),
+                          styleMask: [.titled, .closable, .fullSizeContentView],
+                          backing: .buffered, defer: false)
+        window.title = "Settings"
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.isMovableByWindowBackground = true
+        window.backgroundColor = NSColor(Theme.bg)
+        window.center()
+
+        let root = SettingsView(vm: vm, models: models,
+                                onSave: { [weak window] in window?.close() },
+                                onCancel: { [weak window] in window?.close() })
+        window.contentView = NSHostingView(rootView: root)
     }
-    func show() { controller.show() }
+
+    func show() {
+        models.refresh()
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
 }
 
 final class AboutWindowController {
