@@ -1,0 +1,67 @@
+# Talkty for macOS
+
+**Local speech-to-text for macOS, powered by Whisper.** Native Apple Silicon
+rebuild of the original Windows app — Metal-accelerated, menu-bar resident, fully
+on-device. No internet, no telemetry, audio never leaves your Mac.
+
+Press a global hotkey, speak, get text on your clipboard (and optionally
+auto-pasted at the cursor).
+
+## Features
+
+- **100% local** — whisper.cpp with Metal on Apple Silicon; nothing leaves the device
+- **Fast** — RTF ~0.01–0.1 on an M-series GPU (an 11 s clip transcribes in ~0.1 s)
+- **Menu-bar app** — press the hotkey from anywhere; a floating pill shows the live waveform
+- **Auto-paste** — optionally pastes at the cursor (⌘V) after transcription
+- **Smart post-processing** — re-joins false sentence breaks, strips Whisper
+  hallucinations (“Thanks for watching”, `[MUSIC]`…), applies a custom coding vocabulary
+- **In-app model manager** — download Whisper models (Fast / Balanced / Accurate) with resume
+- **Configurable** — global hotkey, model, microphone, language, vocabulary, volume ducking
+
+## Requirements
+
+- Apple Silicon Mac (M1 or later), macOS 14+
+- ~150 MB + the model you choose (75 MB – 3.1 GB)
+
+## Build & run
+
+```bash
+brew install cmake                 # one-time build dependency
+Scripts/bootstrap.sh               # vendor whisper.cpp (pinned) + build Metal static libs
+Scripts/make_app.sh release        # build + assemble + ad-hoc sign dist/Talkty.app
+open dist/Talkty.app
+```
+
+The first launch asks for **Microphone** (to record) and, if you enable
+auto-paste, **Accessibility** (to synthesize ⌘V). The global hotkey itself needs
+no special permission. Open `Package.swift` in Xcode to edit.
+
+## Models
+
+| Tier | Model | Size | Notes |
+|------|-------|------|-------|
+| Fast | tiny.en / base.en | 75 / 142 MB | English, quick notes |
+| Balanced | small.en | 466 MB | English everyday |
+| Balanced | **large-v3-turbo** ★ | 1.6 GB | 99+ languages, the all-round pick |
+| Accurate | medium.en | 1.5 GB | English, high accuracy |
+| Accurate | large-v3 | 3.1 GB | 99+ languages, highest accuracy |
+
+Models download from HuggingFace into `~/Library/Application Support/Talkty/Models/`.
+
+## Architecture
+
+Swift 6 + SwiftUI over AppKit, whisper.cpp (Metal, embedded shader) as the only
+engine. See `CLAUDE.md` for the developer guide, the subsystem map, and the
+hard-won gotchas (clean-`_exit` teardown, first-load Metal compile, link order).
+
+```
+Sources/CWhisper     C bridge to whisper.h/ggml.h
+Sources/TalktyKit    UI-agnostic logic (engine, audio, post-processing, services, models)
+Sources/Talkty       The app (AppKit/SwiftUI shell, overlay, windows, state machine)
+Sources/TalktyTests  Zero-dependency test harness (runs under Command Line Tools)
+Scripts/             bootstrap, build_whisper, make_app, make_icon
+```
+
+## License
+
+Copyright © 2026 Version2. All rights reserved.

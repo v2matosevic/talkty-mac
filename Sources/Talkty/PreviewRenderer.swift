@@ -47,6 +47,8 @@ enum PreviewRenderer {
         render(AboutView(version: "1.0.0"),
                size: CGSize(width: 400, height: 340), name: "about", dir: dir)
 
+        render(IconView(), size: CGSize(width: 1024, height: 1024), name: "icon_1024", dir: dir)
+
         print("rendered previews to \(outDir)")
     }
 
@@ -54,6 +56,26 @@ enum PreviewRenderer {
         let s = AppState()
         s.recordingState = rs; s.audioLevel = level; s.elapsed = elapsed
         return ZStack { Color(hex: 0x2A2A30); OverlayView(state: s) }
+    }
+
+    /// The app icon: a purple squircle with a white waveform, sized for macOS.
+    struct IconView: View {
+        var body: some View {
+            ZStack {
+                RoundedRectangle(cornerRadius: 185, style: .continuous)
+                    .fill(LinearGradient(colors: [Color(hex: 0x9B7CF0), Color(hex: 0x6E56CF)],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(width: 824, height: 824)
+                    .shadow(color: .black.opacity(0.25), radius: 30, y: 16)
+                HStack(spacing: 34) {
+                    bar(220); bar(360); bar(520); bar(360); bar(220)
+                }
+            }
+            .frame(width: 1024, height: 1024)
+        }
+        private func bar(_ h: CGFloat) -> some View {
+            Capsule().fill(Color.white).frame(width: 48, height: h)
+        }
     }
 
     private static func render(_ view: some View, size: CGSize, name: String, dir: URL) {
