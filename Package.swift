@@ -45,5 +45,11 @@ let package = Package(
             dependencies: ["TalktyKit"],
             path: "Sources/smoke"
         ),
+        // Zero-dependency test harness (runs with Command Line Tools — XCTest needs full Xcode).
+        .executableTarget(
+            name: "TalktyTests",
+            dependencies: ["TalktyKit"],
+            path: "Tests/TalktyTests"
+        ),
     ]
 )
