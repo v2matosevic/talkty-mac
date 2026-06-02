@@ -71,22 +71,28 @@ final class SettingsWindowController {
     }
 }
 
+@MainActor
 final class AboutWindowController {
     private let controller: DarkWindowController
     init(version: String) {
         controller = DarkWindowController(title: "About Talkty", size: NSSize(width: 400, height: 340),
-                                          content: Placeholder(title: "Talkty \(version)"))
+                                          content: AboutView(version: version))
     }
     func show() { controller.show() }
 }
 
+@MainActor
 final class OnboardingWindowController {
     private let controller: DarkWindowController
-    init(settings: SettingsStore, hotkey: HotkeyConfig, onFinish: @escaping () -> Void) {
-        controller = DarkWindowController(title: "Welcome", size: NSSize(width: 500, height: 380),
-                                          content: Placeholder(title: "Welcome to Talkty"))
-        // Auto-mark onboarding complete for now so it doesn't block; real flow in Phase 5.
-        onFinish()
+    init(hotkey: String, onOpenSettings: @escaping () -> Void, onFinish: @escaping () -> Void) {
+        var ctrlRef: DarkWindowController?
+        let c = DarkWindowController(
+            title: "Welcome", size: NSSize(width: 500, height: 420),
+            content: OnboardingView(hotkey: hotkey,
+                                    onOpenSettings: { ctrlRef?.close(); onOpenSettings() },
+                                    onGetStarted: { ctrlRef?.close(); onFinish() }))
+        ctrlRef = c
+        controller = c
     }
     func show() { controller.show() }
 }

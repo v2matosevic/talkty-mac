@@ -12,12 +12,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var dictation: DictationController!
     private var statusItem: StatusItemController!
 
-    // Window controllers are created lazily in later phases.
+    private var mainWindow: MainWindowController?
     private var settingsWindow: SettingsWindowController?
     private var aboutWindow: AboutWindowController?
     private var onboardingWindow: OnboardingWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        NSSetUncaughtExceptionHandler { exception in
+            Log.error("Uncaught exception: \(exception.name.rawValue) — \(exception.reason ?? "")")
+        }
         Log.info("Talkty launching (build \(update.currentVersion))")
         settings.update { $0.hints.appLaunchCount += 1 }
 
@@ -45,10 +48,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func wireStatusItem() {
+        statusItem.onOpen = { [weak self] in self?.showMainWindow() }
         statusItem.onToggle = { [weak self] in self?.dictation.toggle() }
         statusItem.onOpenSettings = { [weak self] in self?.showSettings() }
         statusItem.onOpenAbout = { [weak self] in self?.showAbout() }
         statusItem.onQuit = { [weak self] in self?.quit() }
+    }
+
+    func showMainWindow() {
+        if mainWindow == nil {
+            mainWindow = MainWindowController(state: state, history: history,
+                                              onToggle: { [weak self] in self?.dictation.toggle() },
+                                              onSettings: { [weak self] in self?.showSettings() })
+        }
+        mainWindow?.show()
     }
 
     private func observeNotifications() {
@@ -80,12 +93,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func showOnboarding() {
         if onboardingWindow == nil {
-            onboardingWindow = OnboardingWindowController(settings: settings,
-                                                          hotkey: settings.settings.hotkey,
-                                                          onFinish: { [weak self] in
-                self?.settings.update { $0.hints.hasCompletedOnboarding = true }
-                self?.showSettings()
-            })
+            onboardingWindow = OnboardingWindowController(
+                hotkey: settings.settings.hotkey.displayString,
+                onOpenSettings: { [weak self] in
+                    self?.settings.update { $0.hints.hasCompletedOnboarding = true }
+                    self?.showSettings()
+                },
+                onFinish: { [weak self] in
+                    self?.settings.update { $0.hints.hasCompletedOnboarding = true }
+                })
         }
         onboardingWindow?.show()
     }

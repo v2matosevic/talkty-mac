@@ -29,6 +29,24 @@ enum PreviewRenderer {
         render(overlay(.copied, level: 0, elapsed: 0),
                size: CGSize(width: 240, height: 64), name: "overlay-copied", dir: dir)
 
+        // Main window (with update banner + sample history)
+        let mainState = AppState()
+        mainState.recordingState = .idle; mainState.modelLoaded = true
+        mainState.updateAvailable = UpdateInfo(latestVersion: "1.0.9", downloadURL: "", releaseNotes: "")
+        let mainVM = MainViewModel(history: HistoryStore())
+        mainVM.history = [
+            HistoryEntry(text: "Let me refactor the authentication middleware.", durationSeconds: 1.3),
+            HistoryEntry(text: "Deploy the staging branch to Vercel.", durationSeconds: 0.9),
+            HistoryEntry(text: "Add a Postgres index on the users table.", durationSeconds: 1.1),
+        ]
+        render(MainView(state: mainState, vm: mainVM, onToggle: {}, onSettings: {}),
+               size: CGSize(width: 380, height: 460), name: "main", dir: dir)
+
+        render(OnboardingView(hotkey: "⌥Q", onOpenSettings: {}, onGetStarted: {}),
+               size: CGSize(width: 500, height: 420), name: "onboarding", dir: dir)
+        render(AboutView(version: "1.0.0"),
+               size: CGSize(width: 400, height: 340), name: "about", dir: dir)
+
         print("rendered previews to \(outDir)")
     }
 

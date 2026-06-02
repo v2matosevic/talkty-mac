@@ -10,6 +10,7 @@ final class StatusItemController {
     private let state: AppState
     private var cancellable: AnyCancellable?
 
+    var onOpen: (() -> Void)?
     var onToggle: (() -> Void)?
     var onOpenSettings: (() -> Void)?
     var onOpenAbout: (() -> Void)?
@@ -41,6 +42,10 @@ final class StatusItemController {
         statusItem.isEnabled = false
         menu.addItem(statusItem)
         menu.addItem(.separator())
+
+        let open = NSMenuItem(title: "Open Talkty", action: #selector(openMain), keyEquivalent: "o")
+        open.target = self
+        menu.addItem(open)
 
         toggleItem.target = self
         toggleItem.action = #selector(toggle)
@@ -74,6 +79,7 @@ final class StatusItemController {
         }
     }
 
+    @objc private func openMain() { onOpen?() }
     @objc private func toggle() { onToggle?() }
     @objc private func openSettings() { onOpenSettings?() }
     @objc private func openAbout() { onOpenAbout?() }

@@ -4,6 +4,11 @@ public struct UpdateInfo: Equatable {
     public let latestVersion: String
     public let downloadURL: String
     public let releaseNotes: String
+    public init(latestVersion: String, downloadURL: String, releaseNotes: String) {
+        self.latestVersion = latestVersion
+        self.downloadURL = downloadURL
+        self.releaseNotes = releaseNotes
+    }
 }
 
 /// Background update check: fetches version.json from the GitHub raw feed and
