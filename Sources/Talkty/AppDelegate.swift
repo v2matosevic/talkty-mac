@@ -97,6 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.dictation.updateHotkey(self.settings.settings.hotkey)
                 self.dictation.loadModel()
                 LoginItemService.setEnabled(self.settings.settings.launchAtLogin)
+                self.dictation.ensureAutoPastePermission()
             })
         }
         settingsWindow?.show()

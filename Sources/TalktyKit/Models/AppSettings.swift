@@ -19,10 +19,11 @@ public struct AppSettings: Codable, Equatable {
     /// (the Windows default was CPU because GPU was optional there).
     public var useGPU: Bool = true
 
-    /// Lower system output volume during recording to avoid feedback/interference.
+    /// Lower system output volume during recording so background audio doesn't
+    /// drown the mic.
     public var duckVolumeWhileRecording: Bool = false
-    /// Level to duck to (0.05–1.0). 0.20 = 20% of original.
-    public var volumeDuckLevel: Float = 0.20
+    /// Level to duck to (0.05–1.0). 0.35 = lower other audio to 35% while recording.
+    public var volumeDuckLevel: Float = 0.35
 
     public var useCustomVocabulary: Bool = true
     public var customVocabulary: [String]? = nil

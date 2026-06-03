@@ -17,7 +17,7 @@ struct SettingsView: View {
         }
         .frame(width: 440, height: 720)
         .background(Theme.bg)
-        .onAppear { models.refresh() }
+        .onAppear { models.refresh(); vm.startPermissionWatch() }
     }
 
     private var header: some View {
@@ -142,19 +142,22 @@ struct SettingsSections: View {
                 VStack(alignment: .leading, spacing: 12) {
                     CheckRow(label: "Copy to clipboard", isOn: $vm.draft.copyToClipboard)
                     CheckRow(label: "Auto-paste at cursor", isOn: $vm.draft.autoPaste,
-                             subtitle: "Requires Accessibility permission")
+                             subtitle: "Types your text at the cursor in any app")
+                    if vm.draft.autoPaste { accessibilityStatus }
                     CheckRow(label: "Show notification", isOn: $vm.draft.showNotification)
                     CheckRow(label: "Launch at login", isOn: $vm.draft.launchAtLogin,
                              subtitle: "Start Talkty automatically when you log in")
-                    CheckRow(label: "Lower volume while recording", isOn: $vm.draft.duckVolumeWhileRecording)
+                    CheckRow(label: "Lower volume while recording", isOn: $vm.draft.duckVolumeWhileRecording,
+                             subtitle: "Dims music/other audio so your voice is captured cleanly")
                     if vm.draft.duckVolumeWhileRecording {
                         HStack {
-                            Text("Volume").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                            Text("Lower other audio to").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
                             Stepper(value: $vm.draft.volumeDuckLevel, in: 0.05...1.0, step: 0.05) {
                                 Text("\(Int(vm.draft.volumeDuckLevel * 100))%")
                                     .font(Theme.mono(12)).foregroundStyle(Theme.textPrimary)
                             }
                         }
+                        .padding(.leading, 28)
                     }
                     Divider().background(Theme.border)
                     CheckRow(label: "Metal GPU acceleration", isOn: $vm.draft.useGPU,
@@ -162,6 +165,24 @@ struct SettingsSections: View {
                 }
             }
         }
+    }
+
+    /// Inline Accessibility status shown under the auto-paste row.
+    private var accessibilityStatus: some View {
+        HStack(spacing: 6) {
+            Image(systemName: vm.accessibilityGranted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(vm.accessibilityGranted ? Theme.green : Theme.orange)
+            Text(vm.accessibilityGranted ? "Accessibility granted" : "Accessibility needed to paste")
+                .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+            Spacer()
+            if !vm.accessibilityGranted {
+                Button("Grant") { vm.grantAccessibility() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.purple)
+            }
+        }
+        .padding(.leading, 28)
     }
 
     // MARK: Vocabulary

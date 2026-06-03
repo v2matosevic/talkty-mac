@@ -27,6 +27,17 @@ MainActor.assumeIsolated {
         exit(0)
     }
 
+    // Auto-paste mechanism test: `Talkty --type-text "hello" [delaySeconds]`. After
+    // `delay`, types the text at the cursor (focus a target first). Needs Accessibility.
+    if let i = CommandLine.arguments.firstIndex(of: "--type-text") {
+        NSApplication.shared.setActivationPolicy(.prohibited)
+        let text = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : "Talkty test 123"
+        let delay = CommandLine.arguments.count > i + 2 ? (Double(CommandLine.arguments[i + 2]) ?? 0) : 0
+        if delay > 0 { Thread.sleep(forTimeInterval: delay) }
+        print("type-text: \(AutoPasteService().typeText(text))")
+        exit(0)
+    }
+
     let app = NSApplication.shared
     let delegate = AppDelegate()
     app.delegate = delegate

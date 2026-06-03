@@ -1,44 +1,69 @@
 import AppKit
-import Carbon.HIToolbox
 
-/// Pastes transcribed text into the frontmost app by synthesizing ⌘V (CGEvent).
-/// Requires Accessibility permission. Much simpler than the Windows version: the
-/// menu-bar app + non-activating overlay never steal focus, so there's no
-/// foreground-window capture/restore — the user's app keeps focus throughout.
+/// Inserts transcribed text at the cursor in the frontmost app by synthesizing
+/// Unicode key events (CGEvent) — no clipboard involved, so the user's clipboard
+/// is left untouched and there's no paste-and-restore race. Requires Accessibility.
+/// The menu-bar app + non-activating overlay never steal focus, so the keystrokes
+/// land wherever the cursor is (e.g. a VS Code integrated terminal).
 public final class AutoPasteService {
+    /// Outcome of an insert attempt, so the caller can react (notify / fall back to clipboard).
+    public enum Result: Equatable { case pasted, needsPermission, failed }
+
     public init() {}
 
     public var hasAccessibility: Bool { AXIsProcessTrusted() }
 
-    /// Wait until the user releases the hotkey's modifiers, so they don't corrupt
-    /// the synthesized ⌘V (e.g. a still-held Option turning it into ⌥⌘V). Polls up
-    /// to `timeout`, matching the original's 500 ms cap.
-    public func waitForModifiersRelease(timeout: TimeInterval = 0.5) {
+    /// Wait until the user releases the hotkey's modifiers, so a still-held key
+    /// (e.g. the Option from ⌥Q) doesn't alter the synthesized characters. Polls up
+    /// to `timeout`; returns false if modifiers were still down when it expired.
+    @discardableResult
+    public func waitForModifiersRelease(timeout: TimeInterval = 0.6) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         let watched: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
         while Date() < deadline {
-            if NSEvent.modifierFlags.intersection(watched).isEmpty { return }
+            if NSEvent.modifierFlags.intersection(watched).isEmpty { return true }
             Thread.sleep(forTimeInterval: 0.01)
         }
+        return false
     }
 
-    /// Synthesize ⌘V into the frontmost app. Returns false if Accessibility isn't granted.
+    /// Insert `text` at the cursor in the frontmost app as synthesized keystrokes.
+    /// Clipboard-free, so the user's clipboard is preserved. Waits for the hotkey's
+    /// modifiers to clear first so they don't corrupt the inserted characters.
     @discardableResult
-    public func paste() -> Bool {
+    public func typeText(_ text: String) -> Result {
+        guard !text.isEmpty else { return .pasted }
         guard AXIsProcessTrusted() else {
             Log.warning("Auto-paste skipped: Accessibility permission not granted")
-            return false
+            return .needsPermission
+        }
+        if !waitForModifiersRelease() {
+            Log.warning("Auto-paste: hotkey modifiers still held — inserting anyway")
         }
         let src = CGEventSource(stateID: .combinedSessionState)
-        let vKey = CGKeyCode(kVK_ANSI_V)
-        guard let down = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: true),
-              let up = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: false)
-        else { return false }
-        down.flags = .maskCommand
-        up.flags = .maskCommand
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
-        Log.debug("Auto-paste: synthesized ⌘V into frontmost app")
-        return true
+        // Post in small UTF-16 chunks; a single event truncates very long strings.
+        let units = Array(text.utf16)
+        let chunkSize = 20
+        var i = 0
+        while i < units.count {
+            let chunk = Array(units[i..<min(i + chunkSize, units.count)])
+            guard let down = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false)
+            else {
+                Log.error("Auto-paste: failed to create key events")
+                return .failed
+            }
+            down.flags = []   // literal text — clear any ambient modifiers
+            up.flags = []
+            chunk.withUnsafeBufferPointer { buf in
+                down.keyboardSetUnicodeString(stringLength: buf.count, unicodeString: buf.baseAddress)
+                up.keyboardSetUnicodeString(stringLength: buf.count, unicodeString: buf.baseAddress)
+            }
+            down.post(tap: .cghidEventTap)
+            up.post(tap: .cghidEventTap)
+            i += chunkSize
+        }
+        Log.debug("Auto-paste: inserted \(text.count) chars at cursor")
+        return .pasted
     }
 }

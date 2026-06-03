@@ -41,7 +41,7 @@ private struct Placeholder: View {
 }
 
 @MainActor
-final class SettingsWindowController {
+final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let window: NSWindow
     private let vm: SettingsViewModel
     private let models = ModelManager()
@@ -62,6 +62,8 @@ final class SettingsWindowController {
                                 onSave: { [weak window] in window?.close() },
                                 onCancel: { [weak window] in window?.close() })
         window.contentView = NSHostingView(rootView: root)
+        super.init()
+        window.delegate = self
     }
 
     func show() {
@@ -69,6 +71,9 @@ final class SettingsWindowController {
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }
+
+    // Stop the permission watch whenever the window closes (Save/Cancel/X all route here).
+    func windowWillClose(_ notification: Notification) { vm.stopPermissionWatch() }
 }
 
 @MainActor

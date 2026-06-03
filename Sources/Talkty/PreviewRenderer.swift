@@ -14,6 +14,7 @@ enum PreviewRenderer {
 
         let store = SettingsStore()
         let vm = SettingsViewModel(store: store, onApply: {})
+        vm.draft.autoPaste = true   // show the auto-paste row + its Accessibility indicator
         let models = ModelManager()
         // Render the sections directly (ImageRenderer doesn't lay out ScrollView content).
         render(ZStack(alignment: .top) {

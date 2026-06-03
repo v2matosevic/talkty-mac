@@ -23,6 +23,11 @@ final class SettingsViewModel: ObservableObject {
     @Published var vocabularyText: String
     @Published var replacementRows: [ReplacementRow]
 
+    // Auto-paste permission status (refreshed when the app regains focus, e.g. after
+    // the user returns from System Settings).
+    @Published var accessibilityGranted = PermissionsService.hasAccessibility
+    private var activeObserver: NSObjectProtocol?
+
     private let store: SettingsStore
     private let onApply: () -> Void
 
@@ -63,6 +68,31 @@ final class SettingsViewModel: ObservableObject {
     func cancel() {
         stopTest()
         stopRecordingHotkey()
+    }
+
+    // MARK: Accessibility (for auto-paste)
+
+    /// Begin watching Accessibility status; refreshes when the app regains focus
+    /// (so granting it in System Settings updates the indicator on return).
+    func startPermissionWatch() {
+        refreshPermissions()
+        guard activeObserver == nil else { return }
+        activeObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshPermissions() }
+        }
+    }
+
+    func stopPermissionWatch() {
+        if let o = activeObserver { NotificationCenter.default.removeObserver(o); activeObserver = nil }
+    }
+
+    private func refreshPermissions() { accessibilityGranted = PermissionsService.hasAccessibility }
+
+    /// Prompt for Accessibility and open the pane so the user can flip it on.
+    func grantAccessibility() {
+        PermissionsService.requestAccessibility()
+        PermissionsService.openAccessibilitySettings()
     }
 
     // MARK: Hotkey recorder (local monitor — no special permission while window is key)

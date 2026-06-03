@@ -110,9 +110,7 @@ final class DictationController {
     private func beginCapture() {
         let s = settings.settings
         if s.duckVolumeWhileRecording {
-            let level = s.volumeDuckLevel
-            let ducking = self.ducking
-            DispatchQueue.global(qos: .userInitiated).async { ducking.duck(to: level) }
+            ducking.duck(to: s.volumeDuckLevel)
         }
         let deviceID = s.selectedMicrophoneId.flatMap { AudioDevices.device(forUID: $0)?.id }
         Log.info("Capture: mic=\(s.selectedMicrophoneId ?? "system default") "
@@ -139,8 +137,7 @@ final class DictationController {
         hotkey.unregisterCancel()
         let samples = audio.stop()
         if settings.settings.duckVolumeWhileRecording {
-            let ducking = self.ducking
-            DispatchQueue.global(qos: .userInitiated).async { ducking.restore() }
+            ducking.restore()
         }
         state.recordingState = .transcribing
         state.statusText = "Transcribing…"
@@ -165,20 +162,21 @@ final class DictationController {
         let s = settings.settings
         Log.info("Result: \(text.count) chars in \(String(format: "%.2f", result.duration))s — \"\(Log.preview(text))\"")
 
-        let previousClipboard = clipboard.snapshot()
-        if s.copyToClipboard || s.autoPaste {
+        if s.copyToClipboard {
             clipboard.setText(text)
             Log.debug("Clipboard set (\(text.count) chars)")
         }
         if s.autoPaste {
-            autoPaste.waitForModifiersRelease()
-            let pasted = autoPaste.paste()
-            Log.info("Auto-paste: \(pasted ? "⌘V posted" : "skipped (Accessibility not granted?)")")
-            if pasted && !s.copyToClipboard {
-                // Restore the user's clipboard shortly after the paste lands.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    self.clipboard.restore(previousClipboard)
-                }
+            switch autoPaste.typeText(text) {
+            case .pasted:
+                Log.info("Auto-paste: inserted \(text.count) chars at cursor")
+            case .needsPermission:
+                if !s.copyToClipboard { clipboard.setText(text) }   // fallback so ⌘V works
+                Log.warning("Auto-paste: needs Accessibility — text on clipboard (⌘V to paste)")
+                remindAccessibilityOnce()
+            case .failed:
+                if !s.copyToClipboard { clipboard.setText(text) }
+                Log.error("Auto-paste: insert failed — text on clipboard")
             }
         }
         history.add(HistoryEntry(text: text, durationSeconds: result.duration))
@@ -198,8 +196,7 @@ final class DictationController {
         hotkey.unregisterCancel()
         audio.cancel()
         if settings.settings.duckVolumeWhileRecording {
-            let ducking = self.ducking
-            DispatchQueue.global(qos: .userInitiated).async { ducking.restore() }
+            ducking.restore()
         }
         state.recordingState = .cancelled
         state.statusText = "Cancelled"
@@ -232,6 +229,26 @@ final class DictationController {
 
     private func notify(_ title: String, _ body: String) {
         Notifications.show(title: title, body: body)
+    }
+
+    // MARK: Auto-paste permission
+
+    /// If auto-paste is enabled without Accessibility, surface the system prompt
+    /// (with its "Open System Settings" button). Called when settings are applied.
+    func ensureAutoPastePermission() {
+        guard settings.settings.autoPaste, !PermissionsService.hasAccessibility else { return }
+        Log.info("Auto-paste enabled without Accessibility — prompting")
+        PermissionsService.requestAccessibility()
+    }
+
+    /// One-time gentle nudge at paste time if Accessibility still isn't granted —
+    /// the text is already on the clipboard, so ⌘V works as a fallback.
+    private func remindAccessibilityOnce() {
+        guard !settings.settings.hints.hasSeenAutoPasteHint else { return }
+        settings.update { $0.hints.hasSeenAutoPasteHint = true }
+        notify("Auto-paste needs Accessibility",
+               "Enable Talkty in System Settings → Privacy & Security → Accessibility. Your text is on the clipboard — press ⌘V.")
+        PermissionsService.openAccessibilitySettings()
     }
 }
 
