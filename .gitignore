@@ -12,8 +12,9 @@ Vendor/
 dist/
 *.app
 
-# Local models (downloaded at runtime into ~/Library/Application Support/Talkty/Models)
+# Local models (downloaded at runtime into ~/Library/Application Support/Talkty/Models,
+# which is outside the repo). *.bin covers any stray model blobs. NOTE: do NOT add a
+# bare `Models/` here — it also matches the Sources/TalktyKit/Models source directory.
 *.bin
-Models/
 
 .DS_Store
