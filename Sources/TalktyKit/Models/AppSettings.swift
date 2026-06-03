@@ -8,6 +8,8 @@ public struct AppSettings: Codable, Equatable {
     public var copyToClipboard: Bool = true
     public var autoPaste: Bool = false
     public var showNotification: Bool = false
+    /// Subtle start/done/cancel sounds for eyes-free feedback while dictating.
+    public var soundFeedback: Bool = true
     public var language: String = "en"
     public var autoDetectLanguage: Bool = false
 
@@ -34,6 +36,39 @@ public struct AppSettings: Codable, Equatable {
 
     public init() {}
 
+    private enum CodingKeys: String, CodingKey {
+        case modelId, selectedMicrophoneId, copyToClipboard, autoPaste, showNotification
+        case soundFeedback, language, autoDetectLanguage, launchAtLogin, useGPU
+        case duckVolumeWhileRecording, volumeDuckLevel, useCustomVocabulary
+        case customVocabulary, textReplacements, hotkey, hints
+    }
+
+    /// Lenient decode: any key missing from an older settings.json falls back to its
+    /// default instead of throwing. Without this, adding ANY new setting in an update
+    /// makes the synthesized decoder throw — and SettingsStore resets to defaults on a
+    /// throw — silently wiping the user's whole config. (Learned the hard way.)
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = AppSettings()
+        modelId = try c.decodeIfPresent(String.self, forKey: .modelId) ?? d.modelId
+        selectedMicrophoneId = try c.decodeIfPresent(String.self, forKey: .selectedMicrophoneId) ?? d.selectedMicrophoneId
+        copyToClipboard = try c.decodeIfPresent(Bool.self, forKey: .copyToClipboard) ?? d.copyToClipboard
+        autoPaste = try c.decodeIfPresent(Bool.self, forKey: .autoPaste) ?? d.autoPaste
+        showNotification = try c.decodeIfPresent(Bool.self, forKey: .showNotification) ?? d.showNotification
+        soundFeedback = try c.decodeIfPresent(Bool.self, forKey: .soundFeedback) ?? d.soundFeedback
+        language = try c.decodeIfPresent(String.self, forKey: .language) ?? d.language
+        autoDetectLanguage = try c.decodeIfPresent(Bool.self, forKey: .autoDetectLanguage) ?? d.autoDetectLanguage
+        launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? d.launchAtLogin
+        useGPU = try c.decodeIfPresent(Bool.self, forKey: .useGPU) ?? d.useGPU
+        duckVolumeWhileRecording = try c.decodeIfPresent(Bool.self, forKey: .duckVolumeWhileRecording) ?? d.duckVolumeWhileRecording
+        volumeDuckLevel = try c.decodeIfPresent(Float.self, forKey: .volumeDuckLevel) ?? d.volumeDuckLevel
+        useCustomVocabulary = try c.decodeIfPresent(Bool.self, forKey: .useCustomVocabulary) ?? d.useCustomVocabulary
+        customVocabulary = try c.decodeIfPresent([String].self, forKey: .customVocabulary) ?? d.customVocabulary
+        textReplacements = try c.decodeIfPresent([String: String].self, forKey: .textReplacements) ?? d.textReplacements
+        hotkey = try c.decodeIfPresent(HotkeyConfig.self, forKey: .hotkey) ?? d.hotkey
+        hints = try c.decodeIfPresent(UserHints.self, forKey: .hints) ?? d.hints
+    }
+
     /// Populate vocabulary/replacements from defaults when empty (first run).
     public mutating func fillDefaultsIfNeeded() {
         if customVocabulary == nil || customVocabulary?.isEmpty == true {
@@ -55,4 +90,21 @@ public struct UserHints: Codable, Equatable {
     public var hasCompletedOnboarding = false
     public var appLaunchCount = 0
     public init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case hasSeenTrayMinimizeHint, hasSeenFirstRecordingHint, hasSeenAutoPasteHint
+        case hasSeenModelDownloadHint, hasCompletedOnboarding, appLaunchCount
+    }
+
+    // Lenient decode (see AppSettings.init(from:)) — missing keys take their default.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = UserHints()
+        hasSeenTrayMinimizeHint = try c.decodeIfPresent(Bool.self, forKey: .hasSeenTrayMinimizeHint) ?? d.hasSeenTrayMinimizeHint
+        hasSeenFirstRecordingHint = try c.decodeIfPresent(Bool.self, forKey: .hasSeenFirstRecordingHint) ?? d.hasSeenFirstRecordingHint
+        hasSeenAutoPasteHint = try c.decodeIfPresent(Bool.self, forKey: .hasSeenAutoPasteHint) ?? d.hasSeenAutoPasteHint
+        hasSeenModelDownloadHint = try c.decodeIfPresent(Bool.self, forKey: .hasSeenModelDownloadHint) ?? d.hasSeenModelDownloadHint
+        hasCompletedOnboarding = try c.decodeIfPresent(Bool.self, forKey: .hasCompletedOnboarding) ?? d.hasCompletedOnboarding
+        appLaunchCount = try c.decodeIfPresent(Int.self, forKey: .appLaunchCount) ?? d.appLaunchCount
+    }
 }

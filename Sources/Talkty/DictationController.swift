@@ -112,6 +112,7 @@ final class DictationController {
         if s.duckVolumeWhileRecording {
             ducking.duck(to: s.volumeDuckLevel)
         }
+        if s.soundFeedback { Sounds.start() }
         let deviceID = s.selectedMicrophoneId.flatMap { AudioDevices.device(forUID: $0)?.id }
         Log.info("Capture: mic=\(s.selectedMicrophoneId ?? "system default") "
             + "duck=\(s.duckVolumeWhileRecording ? "\(Int(s.volumeDuckLevel * 100))%" : "off")")
@@ -185,6 +186,7 @@ final class DictationController {
 
         state.recordingState = .copied
         state.statusText = "Copied"
+        if s.soundFeedback { Sounds.done() }
         if s.showNotification { notify("Transcribed", text) }
         resetSoon()
     }
@@ -192,6 +194,7 @@ final class DictationController {
     func cancel() {
         guard state.recordingState == .listening else { return }
         Log.info("✕ Dictation cancelled (ESC)")
+        if settings.settings.soundFeedback { Sounds.cancel() }
         stopTimer()
         hotkey.unregisterCancel()
         audio.cancel()

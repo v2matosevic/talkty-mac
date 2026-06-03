@@ -65,6 +65,24 @@ do {
     eq(AppSettings().hotkey.displayString, "⌥Q", "default hotkey ⌥Q")
 }
 
+// MARK: Settings forward-compat — an OLD settings.json missing newer keys must NOT
+// reset to defaults; present keys are preserved, only the absent ones default.
+do {
+    let oldJSON = Data("""
+    {"modelId":"large-v3-turbo","autoPaste":true,"duckVolumeWhileRecording":true,
+     "volumeDuckLevel":0.15,"hints":{"appLaunchCount":7}}
+    """.utf8)
+    let s = try JSONDecoder().decode(AppSettings.self, from: oldJSON)
+    eq(s.modelId, "large-v3-turbo", "lenient decode: present key preserved")
+    check(s.autoPaste, "lenient decode: present bool preserved")
+    check(s.duckVolumeWhileRecording, "lenient decode: present bool preserved (duck)")
+    check(abs(s.volumeDuckLevel - 0.15) < 0.0001, "lenient decode: present float preserved")
+    check(s.soundFeedback, "lenient decode: missing NEW key → default true")
+    eq(s.language, "en", "lenient decode: missing key → default")
+    eq(s.hints.appLaunchCount, 7, "lenient decode: nested present key preserved")
+    check(!s.hints.hasCompletedOnboarding, "lenient decode: nested missing key → default")
+}
+
 // MARK: Catalog / language resolution
 eq(ModelCatalog.spec(for: "base.en").id, "base.en", "catalog lookup")
 check(ModelCatalog.spec(for: "large-v3-turbo").multilingual, "turbo is multilingual")

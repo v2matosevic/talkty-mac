@@ -76,6 +76,9 @@ final class StatusItemController {
             button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Talkty")
             button.image?.isTemplate = true
             button.contentTintColor = recording ? NSColor.systemRed : nil
+            // Live elapsed time next to the glyph while recording.
+            button.title = recording ? " \(state.elapsedDisplay)" : ""
+            button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         }
     }
 
