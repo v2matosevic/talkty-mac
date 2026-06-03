@@ -144,6 +144,8 @@ struct SettingsSections: View {
                     CheckRow(label: "Auto-paste at cursor", isOn: $vm.draft.autoPaste,
                              subtitle: "Requires Accessibility permission")
                     CheckRow(label: "Show notification", isOn: $vm.draft.showNotification)
+                    CheckRow(label: "Launch at login", isOn: $vm.draft.launchAtLogin,
+                             subtitle: "Start Talkty automatically when you log in")
                     CheckRow(label: "Lower volume while recording", isOn: $vm.draft.duckVolumeWhileRecording)
                     if vm.draft.duckVolumeWhileRecording {
                         HStack {

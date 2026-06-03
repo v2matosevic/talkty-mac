@@ -22,6 +22,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Log.error("Uncaught exception: \(exception.name.rawValue) — \(exception.reason ?? "")")
         }
         Log.info("Talkty launching (build \(update.currentVersion))")
+        Log.info("Logs: \(AppPaths.logsDir.path)/latest.log")
+        settings.update { $0.launchAtLogin = LoginItemService.isEnabled }   // reflect real login-item status
+        logStartupConfig()
         settings.update { $0.hints.appLaunchCount += 1 }
 
         dictation = DictationController(state: state, settings: settings, history: history, overlay: overlay)
@@ -55,6 +58,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.onQuit = { [weak self] in self?.quit() }
     }
 
+    /// Log the effective config at launch so a tail of the log explains behavior.
+    private func logStartupConfig() {
+        let s = settings.settings
+        let lang = s.autoDetectLanguage ? "auto" : s.language
+        Log.info("Config — model=\(s.model.id) gpu=\(s.useGPU) hotkey=\(s.hotkey.displayString) lang=\(lang) "
+            + "copyClipboard=\(s.copyToClipboard) autoPaste=\(s.autoPaste) duck=\(s.duckVolumeWhileRecording) "
+            + "notify=\(s.showNotification) vocab=\(s.useCustomVocabulary) launchAtLogin=\(s.launchAtLogin)")
+        Log.info("Permissions — mic=\(PermissionsService.microphoneStatus.rawValue == 3 ? "granted" : "not-granted") "
+            + "accessibility=\(PermissionsService.hasAccessibility ? "granted" : "not-granted")")
+    }
+
     func showMainWindow() {
         if mainWindow == nil {
             mainWindow = MainWindowController(state: state, history: history,
@@ -79,8 +93,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func showSettings() {
         if settingsWindow == nil {
             settingsWindow = SettingsWindowController(settings: settings, state: state, onApply: { [weak self] in
-                self?.dictation.updateHotkey(self!.settings.settings.hotkey)
-                self?.dictation.loadModel()
+                guard let self else { return }
+                self.dictation.updateHotkey(self.settings.settings.hotkey)
+                self.dictation.loadModel()
+                LoginItemService.setEnabled(self.settings.settings.launchAtLogin)
             })
         }
         settingsWindow?.show()
@@ -109,6 +125,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: Lifecycle
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// Re-opening the app (Finder/Spotlight/`open`, or a Dock click) surfaces the
+    /// main window — otherwise a menu-bar app with no Dock icon appears to "do
+    /// nothing" when launched a second time.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        Log.debug("Reopen requested (hasVisibleWindows=\(flag)) → showing main window")
+        showMainWindow()
+        return true
+    }
 
     private func quit() { NSApp.terminate(nil) }
 

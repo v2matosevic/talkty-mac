@@ -49,6 +49,7 @@ final class DictationController {
     func loadModel() {
         let spec = settings.settings.model
         guard spec.isDownloaded else {
+            Log.warning("Load model: \(spec.id) not downloaded")
             state.recordingState = .noModel
             state.modelLoaded = false
             state.statusText = "No model"
@@ -58,8 +59,12 @@ final class DictationController {
         state.statusText = "Loading model…"
         let useGPU = settings.settings.useGPU
         let transcription = self.transcription
+        Log.info("Load model: \(spec.id) (gpu=\(useGPU))…")
         Task.detached(priority: .userInitiated) {
+            let t0 = Date()
             let ok = transcription.loadModel(spec, useGPU: useGPU)
+            let dt = -t0.timeIntervalSinceNow
+            Log.info("Load model: \(ok ? "ready" : "FAILED") in \(String(format: "%.2f", dt))s (incl. warmup)")
             await MainActor.run { [weak self] in
                 self?.state.modelLoaded = ok
                 self?.state.recordingState = ok ? .idle : .noModel
@@ -71,20 +76,24 @@ final class DictationController {
     // MARK: Toggle / record
 
     func toggle() {
+        Log.debug("Hotkey toggle (state=\(state.recordingState))")
         switch state.recordingState {
         case .listening: stopAndTranscribe()
         case .idle, .copied, .cancelled: startListening()
         case .noModel:
+            Log.info("Toggle ignored: no model loaded → opening Settings")
             NotificationCenter.default.post(name: .talktyOpenSettings, object: nil)
-        default: break   // loading / transcribing → ignore
+        default: Log.debug("Toggle ignored in state=\(state.recordingState)")
         }
     }
 
     private func startListening() {
         guard state.modelLoaded else {
+            Log.info("Start blocked: model not loaded → opening Settings")
             NotificationCenter.default.post(name: .talktyOpenSettings, object: nil)
             return
         }
+        Log.info("▶ Dictation start requested")
         PermissionsService.requestMicrophone { [weak self] granted in
             guard let self else { return }
             guard granted else {
@@ -93,6 +102,7 @@ final class DictationController {
                 PermissionsService.openMicrophoneSettings()
                 return
             }
+            Log.debug("Microphone permission granted")
             self.beginCapture()
         }
     }
@@ -105,6 +115,8 @@ final class DictationController {
             DispatchQueue.global(qos: .userInitiated).async { ducking.duck(to: level) }
         }
         let deviceID = s.selectedMicrophoneId.flatMap { AudioDevices.device(forUID: $0)?.id }
+        Log.info("Capture: mic=\(s.selectedMicrophoneId ?? "system default") "
+            + "duck=\(s.duckVolumeWhileRecording ? "\(Int(s.volumeDuckLevel * 100))%" : "off")")
         do {
             try audio.start(deviceID: deviceID)
         } catch {
@@ -122,6 +134,7 @@ final class DictationController {
     }
 
     private func stopAndTranscribe() {
+        Log.info("■ Stop requested after \(String(format: "%.1f", state.elapsed))s")
         stopTimer()
         hotkey.unregisterCancel()
         let samples = audio.stop()
@@ -142,6 +155,7 @@ final class DictationController {
 
     private func finish(_ result: TranscriptionResult) {
         guard result.success, !result.text.isEmpty else {
+            Log.info("Result: empty — \(result.errorMessage ?? "no speech detected")")
             state.statusText = result.errorMessage ?? "No speech detected"
             resetSoon()
             return
@@ -149,14 +163,17 @@ final class DictationController {
         let text = result.text
         state.lastText = text
         let s = settings.settings
+        Log.info("Result: \(text.count) chars in \(String(format: "%.2f", result.duration))s — \"\(Log.preview(text))\"")
 
         let previousClipboard = clipboard.snapshot()
         if s.copyToClipboard || s.autoPaste {
             clipboard.setText(text)
+            Log.debug("Clipboard set (\(text.count) chars)")
         }
         if s.autoPaste {
             autoPaste.waitForModifiersRelease()
             let pasted = autoPaste.paste()
+            Log.info("Auto-paste: \(pasted ? "⌘V posted" : "skipped (Accessibility not granted?)")")
             if pasted && !s.copyToClipboard {
                 // Restore the user's clipboard shortly after the paste lands.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
@@ -165,6 +182,7 @@ final class DictationController {
             }
         }
         history.add(HistoryEntry(text: text, durationSeconds: result.duration))
+        Log.debug("History: entry added")
         NotificationCenter.default.post(name: .talktyHistoryChanged, object: nil)
 
         state.recordingState = .copied
@@ -175,6 +193,7 @@ final class DictationController {
 
     func cancel() {
         guard state.recordingState == .listening else { return }
+        Log.info("✕ Dictation cancelled (ESC)")
         stopTimer()
         hotkey.unregisterCancel()
         audio.cancel()

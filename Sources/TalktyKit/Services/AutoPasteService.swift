@@ -38,6 +38,7 @@ public final class AutoPasteService {
         up.flags = .maskCommand
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
+        Log.debug("Auto-paste: synthesized ⌘V into frontmost app")
         return true
     }
 }

@@ -1,4 +1,5 @@
 import AppKit
+import TalktyKit
 
 // Menu-bar app: accessory activation policy = no Dock icon (LSUIElement in the bundle).
 // Top-level entry runs on the main thread; assert main-actor isolation for the
@@ -10,6 +11,19 @@ MainActor.assumeIsolated {
         let app = NSApplication.shared
         app.setActivationPolicy(.prohibited)
         PreviewRenderer.run(outDir: outDir)
+        exit(0)
+    }
+
+    // Login-item control/inspection: `Talkty --login-item [on|off|status]`. Must run
+    // from the real .app bundle (SMAppService resolves the main bundle).
+    if let i = CommandLine.arguments.firstIndex(of: "--login-item") {
+        NSApplication.shared.setActivationPolicy(.prohibited)
+        switch CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : "status" {
+        case "on": LoginItemService.setEnabled(true)
+        case "off": LoginItemService.setEnabled(false)
+        default: break
+        }
+        print("login-item: status=\(LoginItemService.statusDescription)")
         exit(0)
     }
 

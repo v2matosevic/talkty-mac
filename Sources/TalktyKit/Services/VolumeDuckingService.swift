@@ -17,9 +17,13 @@ public final class VolumeDuckingService: @unchecked Sendable {   // internally N
     public init() {}
 
     public func duck(to level: Float, fadeSteps: Int = 10, stepInterval: TimeInterval = 0.025) {
-        guard let device = Self.defaultOutputDevice(), let current = Self.getVolume(device) else { return }
+        guard let device = Self.defaultOutputDevice(), let current = Self.getVolume(device) else {
+            Log.debug("Audio duck: no output device/volume — skipped")
+            return
+        }
         lock.lock(); originalVolume = current; lock.unlock()
         let target = max(0.0, min(1.0, level))
+        Log.debug("Audio duck: \(Int(current * 100))% → \(Int(target * 100))%")
         for i in 1...fadeSteps {
             let progress = Float(i) / Float(fadeSteps)
             let v = current + (target - current) * progress
@@ -31,6 +35,7 @@ public final class VolumeDuckingService: @unchecked Sendable {   // internally N
     public func restore(fadeSteps: Int = 10, stepInterval: TimeInterval = 0.025) {
         lock.lock(); let orig = originalVolume; originalVolume = nil; lock.unlock()
         guard let orig, let device = Self.defaultOutputDevice(), let current = Self.getVolume(device) else { return }
+        Log.debug("Audio restore: \(Int(current * 100))% → \(Int(orig * 100))%")
         for i in 1...fadeSteps {
             let progress = Float(i) / Float(fadeSteps)
             let v = current + (orig - current) * progress

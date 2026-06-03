@@ -42,10 +42,15 @@ public final class HotkeyService {
         if id == Self.toggleID {
             // Debounce (matches Constants.hotkeyDebounce) to prevent double-fires.
             let now = Date()
-            if now.timeIntervalSince(lastToggle) < Constants.hotkeyDebounce { return }
+            if now.timeIntervalSince(lastToggle) < Constants.hotkeyDebounce {
+                Log.debug("Hotkey toggle debounced")
+                return
+            }
             lastToggle = now
+            Log.debug("Hotkey: toggle fired")
             onToggle?()
         } else if id == Self.cancelID {
+            Log.debug("Hotkey: cancel (ESC) fired")
             onCancel?()
         }
     }
@@ -58,7 +63,8 @@ public final class HotkeyService {
         let id = EventHotKeyID(signature: OSType(0x544B5953), id: Self.toggleID)  // 'TKYS'
         let status = RegisterEventHotKey(config.keyCode, carbonModifiers(config.modifiers),
                                          id, GetEventDispatcherTarget(), 0, &toggleRef)
-        if status != noErr { Log.warning("RegisterEventHotKey failed (\(status)) for \(config.displayString)") }
+        if status == noErr { Log.info("Hotkey registered: \(config.displayString)") }
+        else { Log.warning("RegisterEventHotKey failed (\(status)) for \(config.displayString)") }
         return status == noErr
     }
 

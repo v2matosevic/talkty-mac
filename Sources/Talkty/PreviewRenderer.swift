@@ -58,23 +58,49 @@ enum PreviewRenderer {
         return ZStack { Color(hex: 0x2A2A30); OverlayView(state: s) }
     }
 
-    /// The app icon: a purple squircle with a white waveform, sized for macOS.
+    /// The app icon: a deep violet macOS squircle (824 in a 1024 canvas, continuous
+    /// corners — Apple's icon grid) with a lit-from-above sheen, a glass rim
+    /// highlight, and a raised waveform glyph so it reads native rather than flat.
     struct IconView: View {
+        private var squircle: RoundedRectangle { RoundedRectangle(cornerRadius: 185, style: .continuous) }
         var body: some View {
             ZStack {
-                RoundedRectangle(cornerRadius: 185, style: .continuous)
-                    .fill(LinearGradient(colors: [Color(hex: 0x9B7CF0), Color(hex: 0x6E56CF)],
-                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                squircle
+                    .fill(LinearGradient(stops: [
+                        .init(color: Color(hex: 0x8E70F2), location: 0.0),
+                        .init(color: Color(hex: 0x6E56CF), location: 0.52),
+                        .init(color: Color(hex: 0x4B37AE), location: 1.0),
+                    ], startPoint: .top, endPoint: .bottom))
                     .frame(width: 824, height: 824)
-                    .shadow(color: .black.opacity(0.25), radius: 30, y: 16)
-                HStack(spacing: 34) {
-                    bar(220); bar(360); bar(520); bar(360); bar(220)
+                    // Lit-from-above sheen.
+                    .overlay(
+                        squircle
+                            .fill(RadialGradient(colors: [.white.opacity(0.30), .white.opacity(0)],
+                                                 center: UnitPoint(x: 0.5, y: -0.08),
+                                                 startRadius: 0, endRadius: 640))
+                            .frame(width: 824, height: 824)
+                    )
+                    // Glass rim highlight along the top edge.
+                    .overlay(
+                        squircle
+                            .strokeBorder(LinearGradient(colors: [.white.opacity(0.5), .white.opacity(0.04)],
+                                                         startPoint: .top, endPoint: .bottom), lineWidth: 2.5)
+                            .frame(width: 824, height: 824)
+                    )
+                    .shadow(color: .black.opacity(0.28), radius: 34, y: 22)
+
+                HStack(spacing: 30) {
+                    bar(196); bar(330); bar(474); bar(566); bar(474); bar(330); bar(196)
                 }
+                .shadow(color: Color(hex: 0x2A1C66).opacity(0.40), radius: 12, y: 7)
             }
             .frame(width: 1024, height: 1024)
         }
         private func bar(_ h: CGFloat) -> some View {
-            Capsule().fill(Color.white).frame(width: 48, height: h)
+            Capsule()
+                .fill(LinearGradient(colors: [.white, .white.opacity(0.85)],
+                                     startPoint: .top, endPoint: .bottom))
+                .frame(width: 44, height: h)
         }
     }
 

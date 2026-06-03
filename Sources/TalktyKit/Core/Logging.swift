@@ -18,6 +18,10 @@ public final class Log {
         fileURL = AppPaths.logsDir.appendingPathComponent("talkty_\(stamp).log")
         FileManager.default.createFile(atPath: fileURL.path, contents: nil)
         handle = try? FileHandle(forWritingTo: fileURL)
+        // Stable path for live tailing across launches: Logs/latest.log → this session.
+        let latest = AppPaths.logsDir.appendingPathComponent("latest.log").path
+        try? FileManager.default.removeItem(atPath: latest)
+        try? FileManager.default.createSymbolicLink(atPath: latest, withDestinationPath: fileURL.lastPathComponent)
         write(.info, "Talkty started — \(ProcessInfo.processInfo.operatingSystemVersionString), cores=\(ProcessInfo.processInfo.activeProcessorCount)")
     }
 
@@ -49,6 +53,12 @@ public final class Log {
         let body = "Talkty crash \(Log.timeStamp(Date()))\n\(type(of: error)): \(error)\n"
         try? body.data(using: .utf8)?.write(to: url)
         write(.error, "CRASH: \(error)")
+    }
+
+    /// Collapse whitespace and truncate for a one-line log preview of free text.
+    public static func preview(_ s: String, _ max: Int = 120) -> String {
+        let flat = s.split(whereSeparator: \.isNewline).joined(separator: " ")
+        return flat.count > max ? String(flat.prefix(max)) + "…" : flat
     }
 
     // Convenience statics
