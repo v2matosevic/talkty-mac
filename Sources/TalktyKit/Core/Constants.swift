@@ -15,8 +15,9 @@ public enum Constants {
     /// Transcription hard timeout.
     public static let transcriptionTimeout: TimeInterval = 30
 
-    /// Update feed (GitHub raw version.json), matching the original.
-    public static let versionFeedURL = "https://raw.githubusercontent.com/v2matosevic/Talkty/main/version.json"
-    public static let repoURL = "https://github.com/v2matosevic/Talkty"
+    /// Update feed (GitHub raw version.json) for the macOS app. Points at the macOS
+    /// repo — NOT the original Windows one — so the version compare is meaningful.
+    public static let versionFeedURL = "https://raw.githubusercontent.com/v2matosevic/talkty-mac/main/version.json"
+    public static let repoURL = "https://github.com/v2matosevic/talkty-mac"
     public static let websiteURL = "https://version2.hr"
 }

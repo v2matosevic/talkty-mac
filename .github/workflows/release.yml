@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # create/upload the GitHub release
+
+jobs:
+  build:
+    runs-on: macos-14            # Apple Silicon
+    env:
+      # 'true' only when Developer ID signing + notarization secrets are configured.
+      # Without them the DMG is still produced, just self-signed (Gatekeeper warns).
+      HAS_SIGNING: ${{ secrets.APPLE_CERTIFICATE_P12 != '' && secrets.APPLE_DEVELOPER_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cmake
+        run: brew list cmake >/dev/null 2>&1 || brew install cmake
+
+      - name: Cache vendored whisper.cpp build
+        uses: actions/cache@v4
+        with:
+          path: Vendor
+          key: whisper-${{ runner.os }}-${{ hashFiles('Scripts/bootstrap.sh', 'Scripts/build_whisper.sh') }}
+
+      - name: Vendor + build whisper.cpp (Metal)
+        run: '[ -f Vendor/whisper-install/lib/libwhisper.a ] || Scripts/bootstrap.sh'
+
+      - name: Build app
+        run: Scripts/make_app.sh release
+
+      - name: Sign with Developer ID (hardened runtime)
+        if: env.HAS_SIGNING == 'true'
+        env:
+          CERT_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KC_PASS="$(uuidgen)"
+          security create-keychain -p "$KC_PASS" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KC_PASS" "$KEYCHAIN"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KC_PASS" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | xargs)
+          codesign --force --deep --options runtime --timestamp --sign "$DEVELOPER_ID" dist/Talkty.app
+          codesign --verify --strict --verbose=2 dist/Talkty.app
+
+      - name: Package DMG
+        run: Scripts/make_dmg.sh release --no-build
+
+      - name: Notarize + staple DMG
+        if: env.HAS_SIGNING == 'true'
+        env:
+          DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          DMG="$(ls dist/Talkty-*.dmg | head -1)"
+          codesign --force --sign "$DEVELOPER_ID" --timestamp "$DMG"
+          xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --team-id "$TEAM_ID" --password "$APP_PASSWORD" --wait
+          xcrun stapler staple "$DMG"
+
+      - name: Publish DMG to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Talkty-*.dmg
+          draft: true
+          generate_release_notes: true
