@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
-# Assemble Talkty.app from the SwiftPM build and ad-hoc code-sign it.
-# Usage: Scripts/make_app.sh [debug|release]   (default: release)
+# Assemble Talkty.app from the SwiftPM build, sign it, and optionally install it.
+# Usage: Scripts/make_app.sh [debug|release] [--install]   (default: release)
+#   --install  also replace /Applications/Talkty.app with the fresh build
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-CONFIG="${1:-release}"
+CONFIG="release"
+INSTALL=0
+for a in "$@"; do
+    case "$a" in
+        debug|release) CONFIG="$a" ;;
+        --install) INSTALL=1 ;;
+        *) echo "unknown arg: $a" >&2; exit 2 ;;
+    esac
+done
 VERSION="$(/usr/bin/plutil -extract version raw version.json 2>/dev/null || echo 1.0.0)"
 APP="dist/Talkty.app"
 BUNDLE_ID="hr.version2.talkty"
@@ -41,11 +50,32 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "==> Code-signing (ad-hoc)…"
-# Ad-hoc signing for personal use. For stable Accessibility/Mic grants across
-# rebuilds, replace "-" with a self-signed identity (see Scripts/dev_identity.sh).
-SIGN_ID="${TALKTY_SIGN_ID:--}"
+# Prefer a stable self-signed identity (keeps TCC grants across rebuilds — see
+# Scripts/dev_identity.sh); fall back to ad-hoc. TALKTY_SIGN_ID overrides both.
+TALKTY_KC="$HOME/Library/Keychains/talkty-dev.keychain-db"
+if [ -n "${TALKTY_SIGN_ID:-}" ]; then
+    SIGN_ID="$TALKTY_SIGN_ID"
+elif [ -f "$TALKTY_KC" ] && security find-identity -p codesigning -v "$TALKTY_KC" 2>/dev/null | grep -q "Talkty Dev"; then
+    SIGN_ID="Talkty Dev"
+    security unlock-keychain -p talkty-dev "$TALKTY_KC" 2>/dev/null || true
+    # codesign resolves the identity via the keychain search list — ensure ours is in it.
+    if ! security list-keychains -d user | grep -q "talkty-dev.keychain"; then
+        security list-keychains -d user -s "$TALKTY_KC" $(security list-keychains -d user | xargs -n1)
+    fi
+else
+    SIGN_ID="-"
+fi
+
+echo "==> Code-signing ($([ "$SIGN_ID" = "-" ] && echo ad-hoc || echo "$SIGN_ID"))…"
 codesign --force --deep --sign "$SIGN_ID" "$APP" >/dev/null 2>&1
 codesign --verify --verbose=1 "$APP" 2>&1 | sed 's/^/    /' || true
+
+if [ "$INSTALL" = "1" ]; then
+    DEST="/Applications/Talkty.app"
+    echo "==> Installing to ${DEST}…"
+    rm -rf "${DEST}"
+    ditto "$APP" "${DEST}"            # ditto preserves the code signature
+    echo "    installed (signature preserved)."
+fi
 
 echo "==> Done: $APP"
