@@ -225,18 +225,23 @@ struct SettingsSections: View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel(text: "Shortcut")
             Card {
-                HStack {
-                    Text("Toggle recording").font(.system(size: 13)).foregroundStyle(Theme.textPrimary)
-                    Spacer()
-                    Button { vm.recordingHotkey ? vm.stopRecordingHotkey() : vm.startRecordingHotkey() } label: {
-                        Text(vm.recordingHotkey ? "Press keys…" : vm.draft.hotkey.displayString)
-                            .font(Theme.mono(12, .semibold))
-                            .foregroundStyle(vm.recordingHotkey ? Theme.purple : Theme.textPrimary)
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                            .background(RoundedRectangle(cornerRadius: 7).fill(Theme.bg))
-                            .overlay(RoundedRectangle(cornerRadius: 7)
-                                .strokeBorder(vm.recordingHotkey ? Theme.purple : Theme.border, lineWidth: 1))
-                    }.buttonStyle(.plain)
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Recording shortcut").font(.system(size: 13)).foregroundStyle(Theme.textPrimary)
+                        Spacer()
+                        Button { vm.recordingHotkey ? vm.stopRecordingHotkey() : vm.startRecordingHotkey() } label: {
+                            Text(vm.recordingHotkey ? "Press keys…" : vm.draft.hotkey.displayString)
+                                .font(Theme.mono(12, .semibold))
+                                .foregroundStyle(vm.recordingHotkey ? Theme.purple : Theme.textPrimary)
+                                .padding(.horizontal, 12).padding(.vertical, 6)
+                                .background(RoundedRectangle(cornerRadius: 7).fill(Theme.bg))
+                                .overlay(RoundedRectangle(cornerRadius: 7)
+                                    .strokeBorder(vm.recordingHotkey ? Theme.purple : Theme.border, lineWidth: 1))
+                        }.buttonStyle(.plain)
+                    }
+                    Divider().background(Theme.border)
+                    CheckRow(label: "Push-to-talk", isOn: $vm.draft.pushToTalk,
+                             subtitle: "Hold the key to record, release to stop (vs. press to toggle)")
                 }
             }
         }

@@ -6,8 +6,15 @@ import Carbon.HIToolbox
 /// permission and cleanly consumes the key. ESC-to-cancel is registered only while
 /// recording. Replaces the Win32 RegisterHotKey + WM_HOTKEY message pump.
 public final class HotkeyService {
-    public var onToggle: (() -> Void)?
+    /// Hotkey key-down (leading edge). Toggle mode: toggles recording. Push-to-talk: starts it.
+    public var onKeyDown: (() -> Void)?
+    /// Hotkey key-up — only used in push-to-talk mode (to stop).
+    public var onKeyUp: (() -> Void)?
     public var onCancel: (() -> Void)?
+
+    /// Hold-to-talk: report key-down/up edges instead of debounced toggles.
+    public var pushToTalk = false { didSet { held = false } }
+    private var held = false
 
     private var toggleRef: EventHotKeyRef?
     private var cancelRef: EventHotKeyRef?
@@ -22,8 +29,11 @@ public final class HotkeyService {
     /// Install the shared Carbon event handler once.
     private func installHandlerIfNeeded() {
         guard !handlerInstalled else { return }
-        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
-                                 eventKind: UInt32(kEventHotKeyPressed))
+        // Listen for both press AND release so push-to-talk can stop on key-up.
+        var specs = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased)),
+        ]
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
         InstallEventHandler(GetEventDispatcherTarget(), { _, event, userData in
             guard let event, let userData else { return noErr }
@@ -32,24 +42,37 @@ public final class HotkeyService {
                               EventParamType(typeEventHotKeyID), nil,
                               MemoryLayout<EventHotKeyID>.size, nil, &hkID)
             let service = Unmanaged<HotkeyService>.fromOpaque(userData).takeUnretainedValue()
-            service.handle(id: hkID.id)
+            service.handle(id: hkID.id, kind: GetEventKind(event))
             return noErr
-        }, 1, &spec, selfPtr, nil)
+        }, 2, &specs, selfPtr, nil)
         handlerInstalled = true
     }
 
-    private func handle(id: UInt32) {
+    private func handle(id: UInt32, kind: UInt32) {
         if id == Self.toggleID {
-            // Debounce (matches Constants.hotkeyDebounce) to prevent double-fires.
-            let now = Date()
-            if now.timeIntervalSince(lastToggle) < Constants.hotkeyDebounce {
-                Log.debug("Hotkey toggle debounced")
-                return
+            if kind == UInt32(kEventHotKeyPressed) {
+                if pushToTalk {
+                    guard !held else { return }   // leading edge only (no auto-repeat)
+                    held = true
+                    Log.debug("Hotkey: key-down (push-to-talk)")
+                    onKeyDown?()
+                } else {
+                    // Toggle: debounce (Constants.hotkeyDebounce) to swallow double-fires.
+                    let now = Date()
+                    if now.timeIntervalSince(lastToggle) < Constants.hotkeyDebounce {
+                        Log.debug("Hotkey toggle debounced"); return
+                    }
+                    lastToggle = now
+                    Log.debug("Hotkey: toggle fired")
+                    onKeyDown?()
+                }
+            } else if kind == UInt32(kEventHotKeyReleased) {
+                guard pushToTalk, held else { return }
+                held = false
+                Log.debug("Hotkey: key-up (push-to-talk)")
+                onKeyUp?()
             }
-            lastToggle = now
-            Log.debug("Hotkey: toggle fired")
-            onToggle?()
-        } else if id == Self.cancelID {
+        } else if id == Self.cancelID, kind == UInt32(kEventHotKeyPressed) {
             Log.debug("Hotkey: cancel (ESC) fired")
             onCancel?()
         }
@@ -59,6 +82,7 @@ public final class HotkeyService {
     public func registerToggle(_ config: HotkeyConfig) -> Bool {
         installHandlerIfNeeded()
         unregisterToggle()
+        held = false
         guard config.isValid else { return false }
         let id = EventHotKeyID(signature: OSType(0x544B5953), id: Self.toggleID)  // 'TKYS'
         let status = RegisterEventHotKey(config.keyCode, carbonModifiers(config.modifiers),

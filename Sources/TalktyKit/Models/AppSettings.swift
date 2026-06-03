@@ -32,6 +32,8 @@ public struct AppSettings: Codable, Equatable {
     public var textReplacements: [String: String]? = nil
 
     public var hotkey: HotkeyConfig = .default
+    /// Hold-to-talk: record while the hotkey is held, stop on release (vs. toggle).
+    public var pushToTalk: Bool = false
     public var hints: UserHints = UserHints()
 
     public init() {}
@@ -40,7 +42,7 @@ public struct AppSettings: Codable, Equatable {
         case modelId, selectedMicrophoneId, copyToClipboard, autoPaste, showNotification
         case soundFeedback, language, autoDetectLanguage, launchAtLogin, useGPU
         case duckVolumeWhileRecording, volumeDuckLevel, useCustomVocabulary
-        case customVocabulary, textReplacements, hotkey, hints
+        case customVocabulary, textReplacements, hotkey, pushToTalk, hints
     }
 
     /// Lenient decode: any key missing from an older settings.json falls back to its
@@ -66,6 +68,7 @@ public struct AppSettings: Codable, Equatable {
         customVocabulary = try c.decodeIfPresent([String].self, forKey: .customVocabulary) ?? d.customVocabulary
         textReplacements = try c.decodeIfPresent([String: String].self, forKey: .textReplacements) ?? d.textReplacements
         hotkey = try c.decodeIfPresent(HotkeyConfig.self, forKey: .hotkey) ?? d.hotkey
+        pushToTalk = try c.decodeIfPresent(Bool.self, forKey: .pushToTalk) ?? d.pushToTalk
         hints = try c.decodeIfPresent(UserHints.self, forKey: .hints) ?? d.hints
     }
 

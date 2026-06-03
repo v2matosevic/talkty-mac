@@ -28,20 +28,44 @@ final class DictationController {
         self.overlay = overlay
 
         audio.onLevel = { [weak self] level in self?.state.audioLevel = level }
-        hotkey.onToggle = { [weak self] in self?.toggle() }
+        hotkey.onKeyDown = { [weak self] in self?.handleKeyDown() }
+        hotkey.onKeyUp = { [weak self] in self?.handleKeyUp() }
         hotkey.onCancel = { [weak self] in self?.cancel() }
     }
 
     // MARK: Hotkey
 
     func registerHotkey() {
+        hotkey.pushToTalk = settings.settings.pushToTalk
         if !hotkey.registerToggle(settings.settings.hotkey) {
             Log.warning("Failed to register hotkey \(settings.settings.hotkey.displayString)")
         }
     }
     func updateHotkey(_ config: HotkeyConfig) {
         settings.update { $0.hotkey = config }
+        hotkey.pushToTalk = settings.settings.pushToTalk
         hotkey.registerToggle(config)
+    }
+
+    // MARK: Hotkey edges (toggle vs push-to-talk)
+
+    private func handleKeyDown() {
+        if settings.settings.pushToTalk { pttStart() } else { toggle() }
+    }
+    private func handleKeyUp() {
+        if settings.settings.pushToTalk { pttStop() }
+    }
+    /// Push-to-talk: pressing the hotkey starts recording.
+    private func pttStart() {
+        switch state.recordingState {
+        case .idle, .copied, .cancelled: startListening()
+        case .noModel: NotificationCenter.default.post(name: .talktyOpenSettings, object: nil)
+        default: break
+        }
+    }
+    /// Push-to-talk: releasing the hotkey stops + transcribes.
+    private func pttStop() {
+        if state.recordingState == .listening { stopAndTranscribe() }
     }
 
     // MARK: Model
