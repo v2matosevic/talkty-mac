@@ -67,6 +67,19 @@ also copies the build into `/Applications`. Open `Package.swift` in Xcode to edi
 
 Models download from HuggingFace into `~/Library/Application Support/Talkty/Models/`.
 
+### Optional: Neural Engine acceleration
+
+Talkty is built with Core ML, so it can run Whisper's **encoder on the Apple Neural
+Engine** (lower power than Metal-only). It's opt-in per model — generate the encoder once:
+
+```bash
+Scripts/make_coreml.sh base.en        # or large-v3-turbo, large-v3, …
+```
+
+That pulls torch/coremltools via `uv` (no Xcode needed) and installs
+`ggml-<model>-encoder.mlmodelc` next to the model. whisper picks it up automatically and
+falls back to Metal when it's absent. The decoder always runs on Metal.
+
 ## Architecture
 
 Swift 6 + SwiftUI over AppKit, whisper.cpp (Metal, embedded shader) as the only

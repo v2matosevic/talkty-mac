@@ -87,12 +87,62 @@ README, installed to `/Applications`.
    - Text lands on the clipboard (⌘V to paste). For auto-paste, enable it in Settings and grant **Accessibility**.
 4. Open the menu → **Open Talkty** to see the history list and record button.
 
+## Post-1.0 — hardening, UX, and open-source (June 2026)
+
+Everything below shipped after the initial 6-phase rebuild, on the public repo
+[`v2matosevic/talkty-mac`](https://github.com/v2matosevic/talkty-mac).
+
+**Observability & lifecycle.** Comprehensive logging across the whole dictation
+flow (hotkey → capture → transcribe → insert → history), a startup config +
+permission dump, and a `Logs/latest.log` symlink for live `tail -F`.
+`applicationShouldHandleReopen` surfaces the main window when the menu-bar app is
+re-opened.
+
+**Stable signing identity.** `Scripts/dev_identity.sh` creates a trusted
+self-signed code-signing cert in a dedicated keychain so the bundle's Designated
+Requirement stays constant across rebuilds — macOS TCC grants (Microphone,
+Accessibility) persist instead of resetting on every ad-hoc build. `make_app.sh`
+auto-signs with it and gains `--install` (refresh `/Applications`).
+
+**Auto-paste = keystroke injection.** Inserts text at the cursor as synthesized
+Unicode key events (clipboard untouched, no restore race) — ideal for editors and
+terminals. Newlines are flattened to spaces so a dictated command never auto-runs.
+Accessibility-aware: enable-time system prompt, a live granted/needed indicator +
+Grant button in Settings, one-time fallback nudge. `--type-text` CLI hook for
+isolated testing.
+
+**Recording volume ducking.** Fades background audio down (configurable level,
+~250 ms serial fade, only-ever-lowers) while recording, then back.
+
+**More UX.** Optional start/done/cancel sound cues; a live recording timer in the
+menu bar; history search + export-to-text; **push-to-talk** (Carbon
+`kEventHotKeyReleased` — hold to record, release to stop; still Accessibility-free);
+launch-at-login via `SMAppService`; refreshed app icon.
+
+**Settings robustness (important fix).** `SettingsStore` reset to defaults on any
+decode failure, and Swift's synthesized decoder throws on a missing key — so adding
+*any* new setting would silently wipe every user's config on update. `AppSettings`/
+`UserHints` now decode leniently (`decodeIfPresent ?? default`), with a regression
+test.
+
+**Core ML / ANE encoder.** whisper.cpp built with `WHISPER_COREML` (+ fallback).
+`Scripts/make_coreml.sh` generates a per-model encoder `.mlmodelc` via
+torch/coremltools (no Xcode — coremltools compiles it). When the encoder sits next
+to the model `.bin`, whisper runs the **encode pass on the Apple Neural Engine**
+(lower power); otherwise it falls back to Metal automatically. Decoder stays on
+Metal. Proven on `base.en` (`Core ML model loaded`, RTF 0.01).
+
+**Open-source distribution.** Public repo + MIT license + README (download/DMG
+install, Gatekeeper note); `Scripts/make_dmg.sh` (drag-to-Applications DMG); GitHub
+Actions for CI (build+test on push/PR) and Release (DMG on tag, Developer ID
+signing + notarization when secrets are present, self-signed fallback otherwise);
+the update feed now points at the macOS repo (was the Windows one).
+
 ## Known limitations / next steps
 
-- **Stable permissions across rebuilds:** ad-hoc signing changes the cdhash each
-  build, which can reset TCC grants. Granting on the installed `/Applications` copy
-  persists as long as it isn't rebuilt over. For dev iteration, sign with a self-signed
-  identity (`TALKTY_SIGN_ID`); for distribution, a Developer ID + notarization.
-- **Xcode** was installing in the background for editing convenience — not required to
-  build (everything builds with Command Line Tools + cmake).
-- Optional future: Core ML encoder (ANE) for faster encode; notarized DMG.
+- **Notarization** needs an Apple Developer account ($99/yr). The release workflow
+  notarizes automatically when the Developer ID secrets are set; otherwise it ships a
+  self-signed DMG (first launch: right-click → Open, or strip the quarantine attr).
+- **Core ML encoders are per-model and opt-in** — run `Scripts/make_coreml.sh <model>`
+  once per model you use; they aren't yet downloaded alongside the `.bin`. Only the
+  encoder uses the ANE; the decoder stays on Metal.
