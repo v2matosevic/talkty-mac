@@ -20,6 +20,11 @@ final class DictationController {
 
     private var timer: Timer?
     private var startedAt: Date?
+    private var resetWork: DispatchWorkItem?
+    /// When the last successful auto-paste landed, and whether the current take began
+    /// soon enough after it to count as continuous dictation (→ prepend a space).
+    private var lastPasteAt: Date?
+    private var continuesPreviousTake = false
 
     init(state: AppState, settings: SettingsStore, history: HistoryStore, overlay: OverlayController) {
         self.state = state
@@ -132,6 +137,10 @@ final class DictationController {
     }
 
     private func beginCapture() {
+        cancelPendingReset()   // a prior take's reset must not tear down this one
+        continuesPreviousTake = lastPasteAt.map {
+            Date().timeIntervalSince($0) < Constants.takeContinuationWindow
+        } ?? false
         let s = settings.settings
         if s.duckVolumeWhileRecording {
             ducking.duck(to: s.volumeDuckLevel)
@@ -166,6 +175,7 @@ final class DictationController {
         }
         state.recordingState = .transcribing
         state.statusText = "Transcribing…"
+        state.audioLevel = 0   // freeze the meter; we're no longer capturing
 
         let settingsSnapshot = settings.settings
         Task { [weak self] in
@@ -192,9 +202,14 @@ final class DictationController {
             Log.debug("Clipboard set (\(text.count) chars)")
         }
         if s.autoPaste {
-            switch autoPaste.typeText(text) {
+            // Continuous dictation: separate this take from the previous one. Only the
+            // typed text gets the space — the clipboard keeps the clean transcription.
+            let pasteText = continuesPreviousTake ? " " + text : text
+            switch autoPaste.typeText(pasteText) {
             case .pasted:
-                Log.info("Auto-paste: inserted \(text.count) chars at cursor")
+                lastPasteAt = Date()
+                Log.info("Auto-paste: inserted \(pasteText.count) chars at cursor"
+                    + (continuesPreviousTake ? " (continuation)" : ""))
             case .needsPermission:
                 if !s.copyToClipboard { clipboard.setText(text) }   // fallback so ⌘V works
                 Log.warning("Auto-paste: needs Accessibility — text on clipboard (⌘V to paste)")
@@ -242,16 +257,27 @@ final class DictationController {
     }
     private func stopTimer() { timer?.invalidate(); timer = nil }
 
+    /// Cancel a queued reset so a finished take's teardown can't hide the overlay or
+    /// clobber the status of a new take started within the reset delay.
+    private func cancelPendingReset() {
+        resetWork?.cancel()
+        resetWork = nil
+    }
+
     private func resetSoon() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + Constants.statusResetDelay) { [weak self] in
+        cancelPendingReset()
+        let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
+            self.resetWork = nil
+            // A new take started during the delay — leave it alone entirely.
+            guard self.state.recordingState != .listening else { return }
             self.overlay.hide()
-            if self.state.recordingState != .listening {
-                self.state.recordingState = self.state.modelLoaded ? .idle : .noModel
-                self.state.statusText = self.state.modelLoaded ? "Ready" : "No model"
-                self.state.audioLevel = 0
-            }
+            self.state.recordingState = self.state.modelLoaded ? .idle : .noModel
+            self.state.statusText = self.state.modelLoaded ? "Ready" : "No model"
+            self.state.audioLevel = 0
         }
+        resetWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Constants.statusResetDelay, execute: work)
     }
 
     private func notify(_ title: String, _ body: String) {

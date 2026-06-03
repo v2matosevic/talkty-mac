@@ -9,10 +9,17 @@ final class OverlayController {
     private var panel: OverlayPanel?
     private let panelSize = NSSize(width: 240, height: 64)
     private let bottomMargin: CGFloat = 40
+    /// Bumped on every show(); a pending hide that captured an older value is stale
+    /// (a new take started during its fade) and must not order the panel out.
+    private var generation = 0
 
     func show(state: AppState) {
+        generation &+= 1
         let panel = ensurePanel(state: state)
         reposition(panel)
+        // Already up (e.g. rapid stop→start cancelled the hide): just reposition,
+        // don't restart the fade — that would flicker.
+        if panel.isVisible && panel.alphaValue > 0.99 { return }
         panel.alphaValue = 0
         panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { ctx in
@@ -23,10 +30,17 @@ final class OverlayController {
 
     func hide() {
         guard let panel else { return }
+        let gen = generation
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = 0.18
             panel.animator().alphaValue = 0
-        }, completionHandler: { panel.orderOut(nil) })
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                // A show() since this fade began means a new take is live — keep it.
+                guard let self, self.generation == gen else { return }
+                panel.orderOut(nil)
+            }
+        })
     }
 
     private func ensurePanel(state: AppState) -> OverlayPanel {

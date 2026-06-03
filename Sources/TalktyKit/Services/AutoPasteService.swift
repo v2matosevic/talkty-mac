@@ -49,6 +49,11 @@ public final class AutoPasteService {
             .replacingOccurrences(of: "\r", with: " ")
         let units = Array(flat.utf16)
         let chunkSize = 20
+        // Events posted to the HID tap back-to-back can be delivered out of order —
+        // a later, smaller chunk (e.g. a trailing ".") can overtake an earlier one,
+        // corrupting the text ("really" → "reall.y"). A short gap between chunks
+        // forces in-order delivery.
+        let interChunkDelay: TimeInterval = 0.005
         var i = 0
         while i < units.count {
             let chunk = Array(units[i..<min(i + chunkSize, units.count)])
@@ -67,6 +72,7 @@ public final class AutoPasteService {
             down.post(tap: .cghidEventTap)
             up.post(tap: .cghidEventTap)
             i += chunkSize
+            if i < units.count { Thread.sleep(forTimeInterval: interChunkDelay) }
         }
         Log.debug("Auto-paste: inserted \(text.count) chars at cursor")
         return .pasted
