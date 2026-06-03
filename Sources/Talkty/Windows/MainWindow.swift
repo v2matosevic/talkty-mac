@@ -1,12 +1,14 @@
 import AppKit
 import SwiftUI
 import Combine
+import UniformTypeIdentifiers
 import TalktyKit
 
 /// Backs the main window's history list, reloading on transcription changes.
 @MainActor
 final class MainViewModel: ObservableObject {
     @Published var history: [HistoryEntry] = []
+    @Published var searchText = ""
     private let store: HistoryStore
     private var observer: NSObjectProtocol?
 
@@ -19,11 +21,29 @@ final class MainViewModel: ObservableObject {
         }
     }
 
+    /// History filtered by the search box (case-insensitive substring).
+    var filtered: [HistoryEntry] {
+        let q = searchText.trimmingCharacters(in: .whitespaces)
+        return q.isEmpty ? history : history.filter { $0.text.localizedCaseInsensitiveContains(q) }
+    }
+
     func copy(_ entry: HistoryEntry) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(entry.text, forType: .string)
     }
-    func clearHistory() { store.clear(); history = [] }
+    func clearHistory() { store.clear(); history = []; searchText = "" }
+
+    /// Export the full history to a user-chosen .txt file, newest first.
+    func export() {
+        guard !history.isEmpty else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "talkty-history.txt"
+        panel.allowedContentTypes = [.plainText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        let body = history.map { "[\(f.string(from: $0.timestamp))]  \($0.text)" }.joined(separator: "\n")
+        try? body.write(to: url, atomically: true, encoding: .utf8)
+    }
 }
 
 @MainActor
@@ -113,24 +133,32 @@ struct MainView: View {
 
     private var historyArea: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
+            HStack(spacing: 12) {
                 Text("HISTORY").font(.system(size: 10, weight: .semibold)).tracking(0.8).foregroundStyle(Theme.textFaint)
                 Spacer()
                 if !vm.history.isEmpty {
+                    Button("Export") { vm.export() }
+                        .buttonStyle(.plain).font(.system(size: 10)).foregroundStyle(Theme.textFaint)
                     Button("Clear") { vm.clearHistory() }
                         .buttonStyle(.plain).font(.system(size: 10)).foregroundStyle(Theme.textFaint)
                 }
             }
             .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 6)
 
+            if !vm.history.isEmpty { searchField }
+
             if vm.history.isEmpty {
                 Text("Your transcriptions will appear here.")
+                    .font(.system(size: 12)).foregroundStyle(Theme.textFaint)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if vm.filtered.isEmpty {
+                Text("No matches.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textFaint)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     VStack(spacing: 0) {
-                        ForEach(vm.history) { entry in
+                        ForEach(vm.filtered) { entry in
                             Button { vm.copy(entry) } label: {
                                 HStack {
                                     Text(entry.text).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
@@ -147,6 +175,22 @@ struct MainView: View {
             }
         }
         .frame(maxHeight: .infinity)
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+            TextField("Search transcriptions", text: $vm.searchText)
+                .textFieldStyle(.plain).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
+            if !vm.searchText.isEmpty {
+                Button { vm.searchText = "" } label: {
+                    Image(systemName: "xmark.circle.fill").font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+                }.buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Theme.card))
+        .padding(.horizontal, 20).padding(.bottom, 6)
     }
 
     private var dotSize: CGFloat { state.recordingState == .listening ? 28 : 20 }

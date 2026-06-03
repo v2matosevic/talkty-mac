@@ -41,8 +41,13 @@ public final class AutoPasteService {
             Log.warning("Auto-paste: hotkey modifiers still held — inserting anyway")
         }
         let src = CGEventSource(stateID: .combinedSessionState)
-        // Post in small UTF-16 chunks; a single event truncates very long strings.
-        let units = Array(text.utf16)
+        // Newlines would arrive as Return — fatal in a terminal (auto-runs the command).
+        // Insert as a single line; post in small UTF-16 chunks (a single event truncates
+        // very long strings).
+        let flat = text.replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+        let units = Array(flat.utf16)
         let chunkSize = 20
         var i = 0
         while i < units.count {
