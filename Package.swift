@@ -10,8 +10,9 @@ let whisperLib = "\(pkgDir)/Vendor/whisper-install/lib"
 let whisperLink: [LinkerSetting] = [
     .unsafeFlags([
         "-L\(whisperLib)",
-        // dependents before dependencies; ggml-base is the most-depended-upon
+        // dependents before dependencies; ggml-base is the most-depended-upon.
         "-lwhisper",
+        "-lwhisper.coreml",     // whisper calls into the Core ML encoder (ANE)
         "-lggml",
         "-lggml-cpu",
         "-lggml-blas",
@@ -21,6 +22,7 @@ let whisperLink: [LinkerSetting] = [
     .linkedFramework("Metal"),
     .linkedFramework("MetalKit"),
     .linkedFramework("Accelerate"),
+    .linkedFramework("CoreML"),     // Core ML encoder runs on the Neural Engine
     .linkedFramework("Foundation"),
     .linkedFramework("AVFoundation"),
     .linkedLibrary("c++"),
