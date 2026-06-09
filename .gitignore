@@ -18,3 +18,7 @@ dist/
 *.bin
 
 .DS_Store
+
+# Machine-local Claude Code permissions (the committed .claude/settings.json
+# carries the shared hooks; local permission rules stay per-machine)
+.claude/settings.local.json
