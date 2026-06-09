@@ -169,7 +169,7 @@ final class DictationController {
         Log.info("■ Stop requested after \(String(format: "%.1f", state.elapsed))s")
         stopTimer()
         hotkey.unregisterCancel()
-        let samples = audio.stop()
+        let take = audio.stop()   // cheap: raw buffer handoff, no resample/trim
         if settings.settings.duckVolumeWhileRecording {
             ducking.restore()
         }
@@ -178,10 +178,13 @@ final class DictationController {
         state.audioLevel = 0   // freeze the meter; we're no longer capturing
 
         let settingsSnapshot = settings.settings
-        Task { [weak self] in
-            guard let self else { return }
-            let result = await self.transcription.transcribe(samples: samples, settings: settingsSnapshot)
-            self.finish(result)
+        let transcription = self.transcription
+        // Resample + trim + whisper all run off the main actor; only finish() hops back.
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let samples = AudioCaptureService.finalize(take)
+            let result = await transcription.transcribe(samples: samples, settings: settingsSnapshot)
+            guard let self else { return }   // rebind: a weak `var` capture is a Swift 6 error in a @Sendable closure
+            await MainActor.run { self.finish(result) }
         }
     }
 

@@ -1,10 +1,20 @@
 import Foundation
 import AVFoundation
 import CoreAudio
+import Accelerate
+
+/// A raw capture: mono samples at the hardware rate. Resample + silence-trim via
+/// `AudioCaptureService.finalize(_:)` — split out so the heavy passes can run off
+/// the main thread instead of stalling the hotkey-release path.
+public struct RawTake: Sendable {
+    public let samples: [Float]
+    public let sampleRate: Double
+    public var isEmpty: Bool { samples.isEmpty }
+}
 
 /// Microphone capture via AVAudioEngine. Captures at the hardware rate, downmixes
-/// to mono in the tap, then resamples the whole take to 16 kHz on stop and trims
-/// silence — matching the Windows pipeline (NAudio WaveIn → 16 kHz mono float).
+/// to mono in the tap, then resamples the whole take to 16 kHz and trims silence
+/// in finalize() — matching the Windows pipeline (NAudio WaveIn → 16 kHz mono float).
 public final class AudioCaptureService {
     /// Peak level [0, 1] per buffer, delivered on the main queue for the overlay meter.
     public var onLevel: ((Float) -> Void)?
@@ -15,6 +25,7 @@ public final class AudioCaptureService {
     private let lock = NSLock()
     private var hwSamples: [Float] = []     // mono @ hardware rate
     private var hwSampleRate: Double = 48000
+    private var scratch: [Float] = []       // reused downmix buffer (tap thread only)
 
     public init() {}
 
@@ -43,18 +54,29 @@ public final class AudioCaptureService {
         Log.info("Recording started @ \(Int(hwSampleRate)) Hz, \(format.channelCount)ch")
     }
 
-    /// Stop and return 16 kHz mono float samples (silence-trimmed).
+    /// Stop and return the raw mono take at the hardware rate. Cheap — no resample
+    /// or trim here, so the caller's UI can update immediately; run finalize(_:) on
+    /// a background thread to get the 16 kHz trimmed samples.
     @discardableResult
-    public func stop() -> [Float] {
-        guard isRecording else { return [] }
+    public func stop() -> RawTake {
+        guard isRecording else { return RawTake(samples: [], sampleRate: hwSampleRate) }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         isRecording = false
 
-        lock.lock(); let mono = hwSamples; lock.unlock()
-        let resampled = resampleTo16k(mono, from: hwSampleRate)
-        let trimmed = AudioCaptureService.trimSilence(resampled)
-        Log.info("Recording stopped: \(trimmed.count) samples (\(String(format: "%.2f", Double(trimmed.count)/16000))s)")
+        // Hand the backing buffer to the take and drop ours — frees the ~2 min
+        // reservation while idle instead of keeping it resident between takes.
+        lock.lock(); let mono = hwSamples; hwSamples = []; lock.unlock()
+        Log.info("Recording stopped: \(String(format: "%.2f", Double(mono.count) / hwSampleRate))s raw @ \(Int(hwSampleRate)) Hz")
+        return RawTake(samples: mono, sampleRate: hwSampleRate)
+    }
+
+    /// Resample a raw take to 16 kHz mono and trim silence. CPU-bound over the whole
+    /// take — call off the main thread.
+    public static func finalize(_ take: RawTake) -> [Float] {
+        let resampled = resampleTo16k(take.samples, from: take.sampleRate)
+        let trimmed = trimSilence(resampled)
+        Log.info("Take finalized: \(trimmed.count) samples (\(String(format: "%.2f", Double(trimmed.count)/16000))s)")
         return trimmed
     }
 
@@ -63,7 +85,7 @@ public final class AudioCaptureService {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         isRecording = false
-        lock.lock(); hwSamples.removeAll(); lock.unlock()
+        lock.lock(); hwSamples = []; lock.unlock()
     }
 
     // MARK: Tap
@@ -72,28 +94,40 @@ public final class AudioCaptureService {
         guard let channels = buffer.floatChannelData else { return }
         let frames = Int(buffer.frameLength)
         let chCount = Int(buffer.format.channelCount)
-        var mono = [Float](repeating: 0, count: frames)
+        guard frames > 0 else { return }
         var peak: Float = 0
         if chCount == 1 {
+            // Mono fast path: peak via vDSP, append straight from the tap's channel
+            // data — no intermediate buffer, no per-callback allocation.
             let src = channels[0]
-            for i in 0..<frames { let v = src[i]; mono[i] = v; let a = abs(v); if a > peak { peak = a } }
+            vDSP_maxmgv(src, 1, &peak, vDSP_Length(frames))
+            lock.lock()
+            hwSamples.append(contentsOf: UnsafeBufferPointer(start: src, count: frames))
+            lock.unlock()
         } else {
-            for i in 0..<frames {
-                var sum: Float = 0
-                for c in 0..<chCount { sum += channels[c][i] }
-                let v = sum / Float(chCount)
-                mono[i] = v
-                let a = abs(v); if a > peak { peak = a }
+            // Downmix into a reused scratch buffer (tap thread only — no races).
+            if scratch.count < frames { scratch = [Float](repeating: 0, count: frames) }
+            scratch.withUnsafeMutableBufferPointer { dst in
+                for i in 0..<frames {
+                    var sum: Float = 0
+                    for c in 0..<chCount { sum += channels[c][i] }
+                    dst[i] = sum / Float(chCount)
+                }
+            }
+            scratch.withUnsafeBufferPointer { buf in
+                vDSP_maxmgv(buf.baseAddress!, 1, &peak, vDSP_Length(frames))
+                lock.lock()
+                hwSamples.append(contentsOf: UnsafeBufferPointer(start: buf.baseAddress!, count: frames))
+                lock.unlock()
             }
         }
-        lock.lock(); hwSamples.append(contentsOf: mono); lock.unlock()
         let level = min(1, peak)
         DispatchQueue.main.async { [weak self] in self?.onLevel?(level) }
     }
 
     // MARK: Resample
 
-    private func resampleTo16k(_ samples: [Float], from rate: Double) -> [Float] {
+    private static func resampleTo16k(_ samples: [Float], from rate: Double) -> [Float] {
         if samples.isEmpty { return [] }
         if abs(rate - 16000) < 1 { return samples }
         guard
@@ -123,7 +157,7 @@ public final class AudioCaptureService {
     }
 
     /// Fallback linear resampler if AVAudioConverter is unavailable.
-    private func linearResample(_ samples: [Float], from rate: Double) -> [Float] {
+    private static func linearResample(_ samples: [Float], from rate: Double) -> [Float] {
         let ratio = 16000 / rate
         let outCount = Int(Double(samples.count) * ratio)
         guard outCount > 1 else { return samples }
