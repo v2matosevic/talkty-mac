@@ -21,6 +21,11 @@ public enum TextPostProcessor {
     /// Double/triple periods that aren't ellipsis.
     private static let doublePeriod = try! NSRegularExpression(pattern: #"\.{2}(?!\.)"#)
 
+    /// Compiled vocabulary patterns, keyed by the raw replacement key. The patterns
+    /// are static for the life of a settings object — recompiling ~40 ICU regexes on
+    /// every transcription was pure hot-path waste. NSCache is thread-safe.
+    private static let replacementRegexes = NSCache<NSString, NSRegularExpression>()
+
     // MARK: Full pipeline
 
     /// Run the complete post-processing chain in the original order.
@@ -89,9 +94,15 @@ public enum TextPostProcessor {
         var result = text
         for (pattern, replacement) in replacements {
             if pattern.trimmingCharacters(in: .whitespaces).isEmpty { continue }
-            guard let regex = try? NSRegularExpression(
+            let regex: NSRegularExpression
+            if let cached = replacementRegexes.object(forKey: pattern as NSString) {
+                regex = cached
+            } else if let built = try? NSRegularExpression(
                 pattern: #"\b"# + NSRegularExpression.escapedPattern(for: pattern) + #"\b"#,
-                options: [.caseInsensitive]) else { continue }
+                options: [.caseInsensitive]) {
+                replacementRegexes.setObject(built, forKey: pattern as NSString)
+                regex = built
+            } else { continue }
 
             // Walk matches back-to-front so ranges stay valid as we substitute.
             let ns = result as NSString
