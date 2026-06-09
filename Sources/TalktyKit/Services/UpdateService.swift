@@ -14,7 +14,7 @@ public struct UpdateInfo: Equatable {
 /// Background update check: fetches version.json from the GitHub raw feed and
 /// compares against the running version (semantic, numeric component compare).
 /// Mirrors the Windows UpdateService.
-public final class UpdateService {
+public final class UpdateService: Sendable {   // stateless
     private struct Feed: Decodable {
         let version: String
         let download_url: String?

@@ -15,7 +15,6 @@ let whisperLink: [LinkerSetting] = [
         "-lwhisper.coreml",     // whisper calls into the Core ML encoder (ANE)
         "-lggml",
         "-lggml-cpu",
-        "-lggml-blas",
         "-lggml-metal",
         "-lggml-base",
     ]),
@@ -27,6 +26,9 @@ let whisperLink: [LinkerSetting] = [
     .linkedFramework("AVFoundation"),
     .linkedLibrary("c++"),
 ]
+
+// Surface data races at compile time (Swift 6 semantics as warnings under 5.9).
+let strictConcurrency: [SwiftSetting] = [.enableExperimentalFeature("StrictConcurrency")]
 
 let package = Package(
     name: "Talkty",
@@ -40,12 +42,14 @@ let package = Package(
             name: "TalktyKit",
             dependencies: ["CWhisper"],
             path: "Sources/TalktyKit",
+            swiftSettings: strictConcurrency,
             linkerSettings: whisperLink
         ),
         .executableTarget(
             name: "Talkty",
             dependencies: ["TalktyKit"],
-            path: "Sources/Talkty"
+            path: "Sources/Talkty",
+            swiftSettings: strictConcurrency
         ),
         .executableTarget(
             name: "smoke",

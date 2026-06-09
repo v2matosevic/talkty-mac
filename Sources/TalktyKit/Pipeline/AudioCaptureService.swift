@@ -1,5 +1,5 @@
 import Foundation
-import AVFoundation
+@preconcurrency import AVFoundation   // AVAudioConverterInputBlock is called synchronously; SDK lacks annotations
 import CoreAudio
 import Accelerate
 
@@ -15,7 +15,9 @@ public struct RawTake: Sendable {
 /// Microphone capture via AVAudioEngine. Captures at the hardware rate, downmixes
 /// to mono in the tap, then resamples the whole take to 16 kHz and trims silence
 /// in finalize() — matching the Windows pipeline (NAudio WaveIn → 16 kHz mono float).
-public final class AudioCaptureService {
+/// @unchecked: hwSamples is lock-guarded, scratch is confined to the tap thread,
+/// start/stop/cancel/isRecording are called from the main actor only.
+public final class AudioCaptureService: @unchecked Sendable {
     /// Peak level [0, 1] per buffer, delivered on the main queue for the overlay meter.
     public var onLevel: ((Float) -> Void)?
 
@@ -145,11 +147,18 @@ public final class AudioCaptureService {
         guard let outBuf = AVAudioPCMBuffer(pcmFormat: dstFormat, frameCapacity: outCapacity) else {
             return linearResample(samples, from: rate)
         }
-        var fed = false
+        // The input block is invoked synchronously inside convert(), but its type is
+        // @Sendable — box the one-shot state instead of mutating a captured var.
+        final class InputFeed: @unchecked Sendable {
+            var fed = false
+            let buf: AVAudioPCMBuffer
+            init(_ buf: AVAudioPCMBuffer) { self.buf = buf }
+        }
+        let feed = InputFeed(inBuf)
         var err: NSError?
         converter.convert(to: outBuf, error: &err) { _, status in
-            if fed { status.pointee = .endOfStream; return nil }
-            fed = true; status.pointee = .haveData; return inBuf
+            if feed.fed { status.pointee = .endOfStream; return nil }
+            feed.fed = true; status.pointee = .haveData; return feed.buf
         }
         if let err { Log.warning("AVAudioConverter failed: \(err); falling back"); return linearResample(samples, from: rate) }
         let ptr = outBuf.floatChannelData![0]

@@ -2,7 +2,7 @@ import Foundation
 
 /// Persisted user settings (Codable → settings.json). Ported from the Windows
 /// AppSettings, adapted to the Mac model catalog and hotkey representation.
-public struct AppSettings: Codable, Equatable {
+public struct AppSettings: Codable, Equatable, Sendable {
     public var modelId: String = ModelCatalog.defaultModelId
     public var selectedMicrophoneId: String? = nil
     public var copyToClipboard: Bool = true
@@ -85,7 +85,7 @@ public struct AppSettings: Codable, Equatable {
     public var model: ModelSpec { ModelCatalog.spec(for: modelId) }
 }
 
-public struct UserHints: Codable, Equatable {
+public struct UserHints: Codable, Equatable, Sendable {
     public var hasSeenTrayMinimizeHint = false
     public var hasSeenFirstRecordingHint = false
     public var hasSeenAutoPasteHint = false

@@ -1,6 +1,6 @@
 import Foundation
 
-public struct Language: Identifiable, Equatable {
+public struct Language: Identifiable, Equatable, Sendable {
     public let code: String
     public let name: String
     public var id: String { code }

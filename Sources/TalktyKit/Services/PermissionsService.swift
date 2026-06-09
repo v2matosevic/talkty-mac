@@ -15,12 +15,16 @@ public enum PermissionsService {
 
     public static var hasMicrophone: Bool { microphoneStatus == .authorized }
 
-    public static func requestMicrophone(_ completion: @escaping (Bool) -> Void) {
+    /// Completion runs on the main actor — synchronously when the status is already
+    /// known (the hotkey press → record path must not gain a runloop hop), via a hop
+    /// only for the first-ever system prompt.
+    @MainActor
+    public static func requestMicrophone(_ completion: @escaping @MainActor @Sendable (Bool) -> Void) {
         switch microphoneStatus {
         case .authorized: completion(true)
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .audio) { granted in
-                DispatchQueue.main.async { completion(granted) }
+                Task { @MainActor in completion(granted) }
             }
         default: completion(false)
         }
@@ -33,8 +37,9 @@ public enum PermissionsService {
     /// Prompts the system Accessibility dialog (only shows once per app identity).
     @discardableResult
     public static func requestAccessibility() -> Bool {
-        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        return AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+        // kAXTrustedCheckOptionPrompt imports as a mutable global (not concurrency-
+        // safe to touch); its value is the stable CF constant below.
+        return AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
     }
 
     // MARK: Open the relevant System Settings panes

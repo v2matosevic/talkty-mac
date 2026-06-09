@@ -23,8 +23,9 @@ public enum TextPostProcessor {
 
     /// Compiled vocabulary patterns, keyed by the raw replacement key. The patterns
     /// are static for the life of a settings object — recompiling ~40 ICU regexes on
-    /// every transcription was pure hot-path waste. NSCache is thread-safe.
-    private static let replacementRegexes = NSCache<NSString, NSRegularExpression>()
+    /// every transcription was pure hot-path waste. NSCache is documented thread-safe;
+    /// nonisolated(unsafe) only tells the compiler what Foundation already guarantees.
+    nonisolated(unsafe) private static let replacementRegexes = NSCache<NSString, NSRegularExpression>()
 
     // MARK: Full pipeline
 

@@ -1,6 +1,9 @@
 import Foundation
 
 /// Transcription history (history.json), newest-first, capped at maxHistoryEntries.
+/// Main-actor: entries backs UI lists and every caller (dictation finish, view
+/// models, app delegate) already lives there; disk writes hop to ioQueue internally.
+@MainActor
 public final class HistoryStore {
     public private(set) var entries: [HistoryEntry]
     private let url = AppPaths.historyFile

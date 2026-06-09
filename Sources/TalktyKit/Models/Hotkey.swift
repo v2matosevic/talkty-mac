@@ -2,7 +2,7 @@ import Foundation
 
 /// Normalized modifier set (mapped to Carbon masks at registration, and to
 /// NSEvent flags in the recorder). "Option" is the macOS equivalent of Windows "Alt".
-public struct HotkeyModifiers: OptionSet, Codable, Hashable {
+public struct HotkeyModifiers: OptionSet, Codable, Hashable, Sendable {
     public let rawValue: UInt32
     public init(rawValue: UInt32) { self.rawValue = rawValue }
 
@@ -31,7 +31,7 @@ public struct HotkeyModifiers: OptionSet, Codable, Hashable {
 
 /// A global hotkey: a hardware virtual key code (shared between NSEvent.keyCode and
 /// Carbon RegisterEventHotKey) plus modifiers.
-public struct HotkeyConfig: Codable, Equatable {
+public struct HotkeyConfig: Codable, Equatable, Sendable {
     public var keyCode: UInt32
     public var modifiers: HotkeyModifiers
 

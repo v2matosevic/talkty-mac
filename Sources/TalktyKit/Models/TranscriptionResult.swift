@@ -1,6 +1,6 @@
 import Foundation
 
-public struct TranscriptionResult {
+public struct TranscriptionResult: Sendable {
     public let text: String
     public let timestamp: Date
     public let duration: TimeInterval     // wall-clock transcription time
@@ -21,7 +21,7 @@ public struct TranscriptionResult {
 }
 
 /// One persisted history entry (history.json), capped at Constants.maxHistoryEntries.
-public struct HistoryEntry: Codable, Identifiable, Equatable {
+public struct HistoryEntry: Codable, Identifiable, Equatable, Sendable {
     public var id = UUID()
     public let text: String
     public let timestamp: Date
