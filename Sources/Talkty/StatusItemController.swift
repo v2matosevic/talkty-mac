@@ -8,7 +8,20 @@ import TalktyKit
 final class StatusItemController {
     private let item: NSStatusItem
     private let state: AppState
-    private var cancellable: AnyCancellable?
+    private var cancellables: Set<AnyCancellable> = []
+
+    // Built once — rebuilding NSImage(systemSymbolName:) on every state tick was
+    // ~22 allocations/sec during recording (audioLevel + elapsed publishers).
+    private static let micImage: NSImage? = {
+        let img = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Talkty")
+        img?.isTemplate = true
+        return img
+    }()
+    private static let waveformImage: NSImage? = {
+        let img = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Talkty")
+        img?.isTemplate = true
+        return img
+    }()
 
     var onOpen: (() -> Void)?
     var onToggle: (() -> Void)?
@@ -24,16 +37,33 @@ final class StatusItemController {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         configureButton()
         item.menu = buildMenu()
-        cancellable = state.objectWillChange.sink { [weak self] in
-            DispatchQueue.main.async { self?.refresh() }
-        }
+        // Narrow subscriptions instead of objectWillChange: the glyph/menu only change
+        // on recordingState transitions, the clock only needs the button title, and
+        // audioLevel (~12 Hz while recording) never reaches the menu bar at all.
+        // @Published emits on willSet, so sinks use the passed value, not state.*.
+        state.$recordingState
+            .removeDuplicates()
+            .sink { [weak self] in self?.refresh(for: $0) }
+            .store(in: &cancellables)
+        state.$statusText
+            .removeDuplicates()
+            .sink { [weak self] in self?.statusItem.title = $0 }
+            .store(in: &cancellables)
+        state.$elapsed
+            .map { Int($0) }            // the clock shows whole seconds…
+            .removeDuplicates()         // …so skip the 10 Hz timer's identical ticks
+            .sink { [weak self] total in
+                guard let self, self.state.recordingState == .listening else { return }
+                self.item.button?.title = String(format: " %02d:%02d", total / 60, total % 60)
+            }
+            .store(in: &cancellables)
     }
 
     private func configureButton() {
         if let button = item.button {
-            button.image = NSImage(systemSymbolName: "mic.fill", accessibilityDescription: "Talkty")
-            button.image?.isTemplate = true
+            button.image = Self.micImage
             button.toolTip = "Talkty"
+            button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         }
     }
 
@@ -66,19 +96,17 @@ final class StatusItemController {
         return menu
     }
 
-    private func refresh() {
-        statusItem.title = state.statusText
-        let recording = state.recordingState == .listening
-        let transcribing = state.recordingState == .transcribing
+    /// Glyph/tint/menu refresh — runs only on recordingState transitions (a handful
+    /// per take), not on every published tick.
+    private func refresh(for recordingState: RecordingState) {
+        let recording = recordingState == .listening
+        let transcribing = recordingState == .transcribing
         toggleItem.title = recording ? "Stop Recording" : "Start Recording"
         if let button = item.button {
-            let symbol = recording ? "mic.fill" : (transcribing ? "waveform" : "mic.fill")
-            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Talkty")
-            button.image?.isTemplate = true
+            button.image = transcribing ? Self.waveformImage : Self.micImage
             button.contentTintColor = recording ? NSColor.systemRed : nil
-            // Live elapsed time next to the glyph while recording.
-            button.title = recording ? " \(state.elapsedDisplay)" : ""
-            button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+            // The live clock is appended by the $elapsed subscription while recording.
+            button.title = recording ? " 00:00" : ""
         }
     }
 
