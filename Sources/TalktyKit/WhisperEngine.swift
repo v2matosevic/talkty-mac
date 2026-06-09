@@ -78,6 +78,11 @@ public final class WhisperEngine {
         params.no_context = true
         params.suppress_blank = true
         params.temperature = 0
+        // whisper's default temperature_inc (0.2) silently enables a 6-step fallback
+        // ladder that re-decodes the whole window on entropy/logprob failures — up to
+        // 6x latency on noisy clips. We want one deterministic pass; post-processing
+        // already strips the hallucinations the ladder tries to salvage.
+        params.temperature_inc = 0
         params.n_threads = threads
         params.greedy.best_of = 1
 
