@@ -1,5 +1,5 @@
 {
-  "version": "1.1.0",
+  "version": "1.2.0",
   "download_url": "https://github.com/v2matosevic/talkty-mac/releases/latest",
-  "release_notes": "Performance release: single-pass whisper decode (no silent 6x fallback re-decodes), resample/trim moved off the main thread (no UI hitch on hotkey release), zero-allocation audio tap, cached vocabulary regexes, far less menu-bar redraw churn while recording, async history writes. Whisper CPU libs now built against a portable Apple Silicon baseline (M1+) instead of the build machine's chip."
+  "release_notes": "Hardening release: the transcription timeout now actually cancels a stuck run (cooperative abort, engine never wedges), model downloads stream in chunks (much less CPU during downloads), less redraw work while transcribing, and the whole codebase is clean under Swift strict concurrency. Adds two opt-in experiment flags (audio_ctx sizing, debug logging on installed builds)."
 }

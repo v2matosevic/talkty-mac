@@ -168,6 +168,30 @@ KV cache, zero idle timers/pollers, reused overlay panel, download resume logic,
 all documented gotchas. Eager model load at launch stays — it is the latency tradeoff
 this app exists for; revisit idle eviction only if large-model users complain about RAM.
 
+## 1.2.0 — hardening (June 2026)
+
+Round two of the optimization sweep — robustness and the long tail:
+
+- **The timeout is real now.** whisper's `abort_callback` is wired to a cooperative
+  cancel flag tripped by the 30 s timeout, quit, and model switches. A runaway
+  `whisper_full` used to keep the engine lock (and CPU) until it finished on its own;
+  now it bails within one decode step.
+- **Chunked model downloads.** `URLSession.bytes` iterated one `UInt8` at a time —
+  over a billion async-iterator steps per large model. A data-delegate now streams
+  multi-KB chunks; resume (Range/206), progress, retries unchanged.
+- **Strict concurrency, zero warnings.** TalktyKit + Talkty build clean with Swift 6
+  concurrency semantics (`StrictConcurrency` under tools 5.9): Sendable conformances
+  across the model types, `HistoryStore` is `@MainActor`, no blanket suppressions.
+  Makes the eventual Swift 6 language-mode bump a non-event.
+- **Energy lows.** Overlay waveform pauses its ~16 Hz redraw loop outside recording
+  (it was ticking exactly while whisper runs); debug log lines are gated in release
+  builds (`defaults write hr.version2.talkty debugLogging -bool YES` to re-enable);
+  launch settings writes coalesced; redundant `GGML_BLAS` backend built out.
+- **Experiment flag:** `defaults write hr.version2.talkty experimentalAudioCtx -bool YES`
+  sizes the encoder attention window to the clip instead of the full 30 s — whisper's
+  documented-experimental speed knob, off by default pending A/B on real takes.
+- CI actions bumped to Node 24 majors (checkout v6, cache v5, gh-release v3).
+
 ## Known limitations / next steps
 
 - **Notarization** needs an Apple Developer account ($99/yr). The release workflow
