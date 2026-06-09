@@ -4,7 +4,6 @@ import Foundation
 /// Owns the WhisperEngine and the currently-loaded model.
 public final class TranscriptionService: @unchecked Sendable {   // engine is NSLock-guarded
     public let engine = WhisperEngine()
-    public private(set) var loadedModelId: String?
 
     public init() {}
 
@@ -19,19 +18,16 @@ public final class TranscriptionService: @unchecked Sendable {   // engine is NS
         }
         do {
             try engine.load(modelPath: spec.localURL.path, useGPU: useGPU)
-            loadedModelId = spec.id
             if warmup { engine.warmup() }
             return true
         } catch {
             Log.error("Model load failed: \(error)")
-            loadedModelId = nil
             return false
         }
     }
 
     public func unload() {
         engine.unload()
-        loadedModelId = nil
     }
 
     /// Transcribe 16 kHz mono samples into a finished result (post-processed).
@@ -48,9 +44,11 @@ public final class TranscriptionService: @unchecked Sendable {   // engine is NS
             ? (settings.textReplacements ?? DefaultVocabulary.defaultReplacements)
             : [:]
 
+        let audioCtx = Self.experimentalAudioCtx(sampleCount: samples.count)
         let t0 = Date()
         do {
-            let segments = try engine.transcribeSegments(samples: samples, language: language, initialPrompt: prompt)
+            let segments = try engine.transcribeSegments(samples: samples, language: language,
+                                                         initialPrompt: prompt, audioCtx: audioCtx)
             let text = TextPostProcessor.process(segments: segments, replacements: replacements)
             let dur = -t0.timeIntervalSinceNow
             let rtf = dur / max(Double(samples.count) / Constants.sampleRate, 0.001)
@@ -82,6 +80,21 @@ public final class TranscriptionService: @unchecked Sendable {   // engine is NS
             group.cancelAll()
             return first ?? .failure("Transcription produced no result")
         }
+    }
+
+    /// [EXPERIMENTAL] Size the encoder's attention window to the clip instead of the
+    /// full 30 s — the single biggest encoder-latency lever for short dictations, but
+    /// whisper documents the knob as quality-affecting if undersized. Off by default;
+    /// A/B on real takes with (takes effect immediately, no relaunch):
+    ///   defaults write hr.version2.talkty experimentalAudioCtx -bool YES
+    /// Compare the logged "audio_ctx=…" RTF lines against baseline takes.
+    private static func experimentalAudioCtx(sampleCount: Int) -> Int32 {
+        guard UserDefaults.standard.bool(forKey: "experimentalAudioCtx") else { return 0 }
+        let seconds = Double(sampleCount) / Constants.sampleRate
+        // 1500 positions = 30 s → 50/s; +2 s headroom, floor 256, never above default.
+        let ctx = Int32(min(1500, max(256, Int(((seconds + 2) / 30.0 * 1500).rounded(.up)))))
+        Log.info("audio_ctx=\(ctx) (experimental, clip \(String(format: "%.1f", seconds))s)")
+        return ctx
     }
 
     private func buildPrompt(_ settings: AppSettings) -> String? {

@@ -83,10 +83,14 @@ public final class WhisperEngine {
 
     /// Transcribe 16 kHz mono float samples into raw segments. `initialPrompt` biases
     /// the decoder toward domain vocabulary. `language` "auto" enables detection.
+    /// `audioCtx` > 0 shrinks the encoder's attention window from the full 30 s
+    /// (1500 positions) to fit the clip — whisper's [EXPERIMENTAL] speed-up knob.
+    /// 0 = whisper default (full window).
     public func transcribeSegments(samples: [Float],
                                    language: String = "en",
                                    initialPrompt: String? = nil,
-                                   threads: Int32 = WhisperEngine.defaultThreads) throws -> [String] {
+                                   threads: Int32 = WhisperEngine.defaultThreads,
+                                   audioCtx: Int32 = 0) throws -> [String] {
         lock.lock(); defer { lock.unlock() }
         guard let ctx else { throw EngineError.notLoaded }
         abortFlag.pointee = false   // fresh run; a stale abort must not kill it
@@ -107,6 +111,7 @@ public final class WhisperEngine {
         params.temperature_inc = 0
         params.n_threads = threads
         params.greedy.best_of = 1
+        if audioCtx > 0 { params.audio_ctx = audioCtx }
 
         // Hold C strings alive across the whisper_full call.
         let langC = strdup(language)
