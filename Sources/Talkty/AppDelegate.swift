@@ -23,9 +23,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Log.info("Talkty launching (build \(update.currentVersion))")
         Log.info("Logs: \(AppPaths.logsDir.path)/latest.log")
-        settings.update { $0.launchAtLogin = LoginItemService.isEnabled }   // reflect real login-item status
+        settings.update {   // one coalesced write: each update() is a full encode + atomic file rewrite
+            $0.launchAtLogin = LoginItemService.isEnabled   // reflect real login-item status
+            $0.hints.appLaunchCount += 1
+        }
         logStartupConfig()
-        settings.update { $0.hints.appLaunchCount += 1 }
 
         dictation = DictationController(state: state, settings: settings, history: history, overlay: overlay)
         statusItem = StatusItemController(state: state)

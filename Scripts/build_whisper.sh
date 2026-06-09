@@ -18,7 +18,11 @@ cmake -S Vendor/whisper.cpp -B Vendor/whisper-build \
   -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON -DGGML_ACCELERATE=ON \
   -DWHISPER_COREML=ON -DWHISPER_COREML_ALLOW_FALLBACK=ON \
   -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_SERVER=OFF \
-  -DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH="${GGML_ARCH}"
+  -DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH="${GGML_ARCH}" \
+  -DGGML_BLAS=OFF
+  # GGML_BLAS=OFF: on Apple it defaults ON as a second Accelerate wrapper, but
+  # GGML_ACCELERATE already routes matmul through Accelerate inside ggml-cpu —
+  # the extra backend only adds a registration at startup and another lib to link.
 cmake --build Vendor/whisper-build --config Release -j
 cmake --install Vendor/whisper-build --prefix Vendor/whisper-install
 cp Vendor/whisper-install/include/*.h Sources/CWhisper/include/

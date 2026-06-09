@@ -3,7 +3,8 @@ import os
 
 /// Lightweight thread-safe logger: writes a timestamped session file under Logs/
 /// and mirrors to the unified log. Replaces the Windows ConcurrentQueue logger.
-public final class Log {
+/// @unchecked: the only mutable state (`handle`) is confined to the serial queue.
+public final class Log: @unchecked Sendable {
     public enum Level: String { case debug = "DEBUG", info = "INFO", warning = "WARN", error = "ERROR" }
 
     public static let shared = Log()
@@ -61,8 +62,24 @@ public final class Log {
         return flat.count > max ? String(flat.prefix(max)) + "…" : flat
     }
 
-    // Convenience statics
-    public static func debug(_ m: String) { shared.write(.debug, m) }
+    /// Debug lines are gated in release builds — each one otherwise costs string
+    /// interpolation, a timestamp format, a queue dispatch, and an os_log call.
+    /// Re-enable on an installed app (takes effect at next launch):
+    ///   defaults write hr.version2.talkty debugLogging -bool YES
+    public static let debugEnabled: Bool = {
+        #if DEBUG
+        return true
+        #else
+        return UserDefaults.standard.bool(forKey: "debugLogging")
+        #endif
+    }()
+
+    // Convenience statics. @autoclosure so a suppressed debug line never even
+    // builds its interpolated message.
+    public static func debug(_ m: @autoclosure () -> String) {
+        guard debugEnabled else { return }
+        shared.write(.debug, m())
+    }
     public static func info(_ m: String) { shared.write(.info, m) }
     public static func warning(_ m: String) { shared.write(.warning, m) }
     public static func error(_ m: String) { shared.write(.error, m) }

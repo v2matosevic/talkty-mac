@@ -68,7 +68,10 @@ private struct WaveformBars: View {
     private let bases: [CGFloat] = [0.42, 0.85, 0.55]   // relative idle heights
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.06)) { timeline in
+        // Paused when not listening: the panel stays visible through the transcribing/
+        // copied tail, and ~16 Hz redraws of static bars would land exactly while the
+        // CPU/GPU is busiest with the model.
+        TimelineView(.animation(minimumInterval: 0.06, paused: !active)) { timeline in
             let t = timeline.date.timeIntervalSinceReferenceDate
             HStack(alignment: .center, spacing: 3) {
                 ForEach(0..<3, id: \.self) { i in
