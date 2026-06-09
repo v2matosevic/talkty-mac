@@ -67,9 +67,14 @@ public final class Log {
     public static func warning(_ m: String) { shared.write(.warning, m) }
     public static func error(_ m: String) { shared.write(.error, m) }
 
+    // Built once — DateFormatter construction is expensive and write() runs on every
+    // log line. string(from:) is thread-safe (macOS 10.9+).
+    private static let timeFormatter = formatter("HH:mm:ss.SSS")
+    private static let fileFormatter = formatter("yyyy-MM-dd_HH-mm-ss")
+
     private static func formatter(_ fmt: String) -> DateFormatter {
         let f = DateFormatter(); f.dateFormat = fmt; f.locale = Locale(identifier: "en_US_POSIX"); return f
     }
-    private static func timeStamp(_ d: Date) -> String { formatter("HH:mm:ss.SSS").string(from: d) }
-    private static func fileStamp(_ d: Date) -> String { formatter("yyyy-MM-dd_HH-mm-ss").string(from: d) }
+    private static func timeStamp(_ d: Date) -> String { timeFormatter.string(from: d) }
+    private static func fileStamp(_ d: Date) -> String { fileFormatter.string(from: d) }
 }

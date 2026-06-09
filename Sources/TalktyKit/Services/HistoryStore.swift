@@ -4,6 +4,10 @@ import Foundation
 public final class HistoryStore {
     public private(set) var entries: [HistoryEntry]
     private let url = AppPaths.historyFile
+    private let encoder = JSONEncoder()   // reused; only ever touched on ioQueue
+    /// Persistence runs off the caller's thread — add() fires on the main actor at
+    /// the end of every dictation and the in-memory array is the source of truth.
+    private let ioQueue = DispatchQueue(label: "hr.version2.talkty.history", qos: .utility)
 
     public init() {
         if let data = try? Data(contentsOf: url),
@@ -28,11 +32,20 @@ public final class HistoryStore {
     }
 
     private func save() {
-        do {
-            let data = try JSONEncoder().encode(entries)
-            try data.write(to: url, options: .atomic)
-        } catch {
-            Log.error("Failed to save history: \(error)")
+        let snapshot = entries
+        ioQueue.async { [encoder, url] in
+            do {
+                let data = try encoder.encode(snapshot)
+                try data.write(to: url, options: .atomic)
+            } catch {
+                Log.error("Failed to save history: \(error)")
+            }
         }
+    }
+
+    /// Drain any pending write — call before _exit(0) at quit so the last take's
+    /// entry isn't lost.
+    public func flush() {
+        ioQueue.sync {}
     }
 }

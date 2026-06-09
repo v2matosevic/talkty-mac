@@ -146,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dictation.hotkey.unregisterToggle()
         dictation.transcription.unload()
         settings.save()
+        history.flush()   // history writes are async — drain before _exit
         Log.shared.flush()
         _exit(0)
     }
