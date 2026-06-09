@@ -146,3 +146,15 @@ the update feed now points at the macOS repo (was the Windows one).
 - **Core ML encoders are per-model and opt-in** — run `Scripts/make_coreml.sh <model>`
   once per model you use; they aren't yet downloaded alongside the `.bin`. Only the
   encoder uses the ANE; the decoder stays on Metal.
+- **AirPods / Bluetooth audio drops out for ~1 s after each dictation.** If your input
+  device is a Bluetooth headset, recording opens its mic, which forces the link off
+  high-quality playback (A2DP) onto the low-fi bidirectional profile (HFP) for the take,
+  then back again on stop. Each profile switch is a ~1 s link renegotiation — that gap is
+  the silence in your music right after transcription, and dictation audio sounds muddy
+  (mono HFP) while recording. This is a classic Bluetooth limitation in the macOS audio
+  stack, not a Talkty bug: AirPods can't carry hi-fi output and a mic channel at the same
+  time, and no API exposes the renegotiation gap. **The only way to avoid it is to not open
+  the Bluetooth mic** — pick the built-in Mac mic in Settings → Microphone. Doing so keeps
+  AirPods in A2DP the whole time (no dropout) and gives wideband dictation audio; the
+  trade-off is you must be near the Mac to be heard. A future "use built-in mic for
+  dictation when a Bluetooth input is selected" toggle could automate this.
