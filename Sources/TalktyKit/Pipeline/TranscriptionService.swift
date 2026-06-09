@@ -62,8 +62,9 @@ public final class TranscriptionService: @unchecked Sendable {   // engine is NS
         }
     }
 
-    /// Async wrapper with a hard timeout. The underlying whisper call can't be
-    /// force-interrupted; on timeout we abandon the wait and report failure.
+    /// Async wrapper with a hard timeout. On timeout the engine's abort_callback is
+    /// tripped, so whisper bails at its next decode step and releases the engine lock
+    /// (instead of pinning CPU/the lock until the runaway run finished on its own).
     public func transcribe(samples: [Float], settings: AppSettings,
                            timeout: TimeInterval = Constants.transcriptionTimeout) async -> TranscriptionResult {
         await withTaskGroup(of: TranscriptionResult?.self) { group in
@@ -71,8 +72,10 @@ public final class TranscriptionService: @unchecked Sendable {   // engine is NS
                 guard let self else { return nil }
                 return self.transcribe(samples: samples, settings: settings)
             }
-            group.addTask {
+            group.addTask { [weak self] in
                 try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                guard !Task.isCancelled else { return nil }   // transcribe won; don't abort the engine
+                self?.engine.requestAbort()
                 return TranscriptionResult.failure("Transcription timed out after \(Int(timeout))s")
             }
             let first = await group.next() ?? nil

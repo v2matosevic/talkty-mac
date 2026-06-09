@@ -9,21 +9,40 @@ public final class WhisperEngine {
     private let lock = NSLock()
     public private(set) var loadedModelPath: String?
 
+    /// Cooperative-cancel flag read by whisper's abort_callback between decode steps.
+    /// Written WITHOUT the engine lock on purpose: requestAbort() is called precisely
+    /// while transcribeSegments holds the lock. Single-byte stores/loads are atomic on
+    /// arm64 and eventual visibility is all the callback needs (whisper.cpp's own
+    /// examples use a plain C bool the same way).
+    private let abortFlag = UnsafeMutablePointer<Bool>.allocate(capacity: 1)
+
     public enum EngineError: Error, CustomStringConvertible {
         case modelLoadFailed(String)
         case notLoaded
         case transcriptionFailed(Int32)
+        case cancelled
         public var description: String {
             switch self {
             case .modelLoadFailed(let p): return "Failed to load model at \(p)"
             case .notLoaded: return "Whisper model is not loaded"
             case .transcriptionFailed(let c): return "whisper_full failed (code \(c))"
+            case .cancelled: return "Transcription aborted"
             }
         }
     }
 
-    public init() {}
-    deinit { unload() }
+    public init() { abortFlag.pointee = false }
+    deinit {
+        unload()
+        abortFlag.deallocate()
+    }
+
+    /// Ask a running whisper_full to bail at its next decode step (cooperative — takes
+    /// effect within one step, not instantly). Safe to call from any thread, including
+    /// while transcribeSegments holds the engine lock; the flag resets on the next call.
+    public func requestAbort() {
+        abortFlag.pointee = true
+    }
 
     public var isLoaded: Bool { lock.withLock { ctx != nil } }
 
@@ -33,6 +52,7 @@ public final class WhisperEngine {
     }
 
     public func load(modelPath: String, useGPU: Bool = true) throws {
+        requestAbort()   // don't queue a model swap behind an in-flight transcription
         lock.lock(); defer { lock.unlock() }
         if let ctx { whisper_free(ctx); self.ctx = nil }
         var p = whisper_context_default_params()
@@ -47,6 +67,7 @@ public final class WhisperEngine {
     }
 
     public func unload() {
+        requestAbort()   // a running transcription releases the lock within one step
         lock.lock(); defer { lock.unlock() }
         if let ctx { whisper_free(ctx) }
         ctx = nil
@@ -68,6 +89,7 @@ public final class WhisperEngine {
                                    threads: Int32 = WhisperEngine.defaultThreads) throws -> [String] {
         lock.lock(); defer { lock.unlock() }
         guard let ctx else { throw EngineError.notLoaded }
+        abortFlag.pointee = false   // fresh run; a stale abort must not kill it
 
         var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
         params.print_realtime = false
@@ -94,8 +116,19 @@ public final class WhisperEngine {
         params.detect_language = (language == "auto")
         if let promptC { params.initial_prompt = UnsafePointer(promptC) }
 
+        // Cooperative cancel: whisper polls this between encode/decode steps, so a
+        // timed-out or quitting caller can actually free the engine (requestAbort()).
+        params.abort_callback = { userData in
+            userData!.assumingMemoryBound(to: Bool.self).pointee
+        }
+        params.abort_callback_user_data = UnsafeMutableRawPointer(abortFlag)
+
         let rc = samples.withUnsafeBufferPointer { buf in
             whisper_full(ctx, params, buf.baseAddress, Int32(buf.count))
+        }
+        if abortFlag.pointee {
+            Log.info("Transcription aborted mid-run (rc=\(rc))")
+            throw EngineError.cancelled
         }
         guard rc == 0 else { throw EngineError.transcriptionFailed(rc) }
 
