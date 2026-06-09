@@ -55,10 +55,25 @@ let tLoad = Date()
 try engine.load(modelPath: modelPath, useGPU: true)
 print("model loaded in \(String(format: "%.2f", -tLoad.timeIntervalSinceNow))s")
 
-let tRun = Date()
-let text = try engine.transcribe(samples: samples, language: language)
-let runSecs = -tRun.timeIntervalSinceNow
-print("transcribed in \(String(format: "%.2f", runSecs))s  (RTF \(String(format: "%.2f", runSecs / max(audioSecs, 0.001))))")
+// Benchmark knobs (defaults preserve the original single-run behavior):
+//   TALKTY_AUDIO_CTX=<n>  encoder attention window override (0/unset = full 30 s)
+//   TALKTY_RUNS=<n>       timed runs after one untimed warm pass (Metal compile)
+let audioCtx = Int32(ProcessInfo.processInfo.environment["TALKTY_AUDIO_CTX"] ?? "") ?? 0
+let runs = Int(ProcessInfo.processInfo.environment["TALKTY_RUNS"] ?? "") ?? 1
+if audioCtx > 0 { print("audio_ctx override: \(audioCtx)") }
+
+var text = ""
+if runs > 1 { _ = try engine.transcribeSegments(samples: samples, language: language, audioCtx: audioCtx) }
+var times: [Double] = []
+for _ in 0..<runs {
+    let tRun = Date()
+    let segments = try engine.transcribeSegments(samples: samples, language: language, audioCtx: audioCtx)
+    times.append(-tRun.timeIntervalSinceNow)
+    text = segments.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+}
+let runSecs = times.sorted()[times.count / 2]   // median
+print("transcribed in \(String(format: "%.3f", runSecs))s  (RTF \(String(format: "%.3f", runSecs / max(audioSecs, 0.001)))"
+    + (runs > 1 ? ", median of \(runs)" : "") + ")")
 print("----\n\(text)\n----")
 
 // ggml-metal's global device is torn down by a C++ static destructor at process
