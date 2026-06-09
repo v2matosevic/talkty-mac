@@ -138,6 +138,36 @@ Actions for CI (build+test on push/PR) and Release (DMG on tag, Developer ID
 signing + notarization when secrets are present, self-signed fallback otherwise);
 the update feed now points at the macOS repo (was the Windows one).
 
+## 1.1.0 — performance pass (June 2026)
+
+A full optimization sweep (multi-agent review, every finding adversarially
+verified, then hand-reconciled). Confirmed-and-fixed:
+
+- **Single-pass decode.** whisper's default `temperature_inc` (0.2) silently armed a
+  6-step fallback ladder that re-decoded the whole window on entropy/logprob failures —
+  up to 6× latency on noisy clips. Now one deterministic pass; post-processing already
+  strips what the ladder tried to salvage.
+- **Portable CPU baseline (shipping fix).** `GGML_NATIVE` defaulted ON and baked the
+  build machine's microarch (M5: `+sme`, an M4+ ISA feature) into the redistributable
+  libs. Builds now pin `-march=armv8.4-a+fp16+dotprod` (the M1 floor); override with
+  `TALKTY_GGML_ARCH` for tuned local builds.
+- **Off-main audio finalize.** `stop()` returns the raw take; resample + silence-trim
+  run in the background transcription task instead of stalling the main actor between
+  hotkey-release and "Transcribing". The audio tap no longer allocates per callback
+  (vDSP peak, direct append), and the ~23 MB capture reservation is freed between takes.
+- **Hot-path regex cache.** Vocabulary replacements recompiled ~40 ICU regexes on every
+  transcription; now compiled once and cached.
+- **Menu-bar churn.** The status item rebuilt its NSImage ~22×/sec during recording from
+  an unfiltered `objectWillChange` sink. Now: glyph only on state transitions, clock
+  title once per second, audio level never reaches the menu bar.
+- **Small wins.** Cached log date formatters (was one `DateFormatter` per log line);
+  history writes moved off the main actor (drained before `_exit(0)` at quit).
+
+Verified intact by the same sweep (left alone deliberately): resident engine + reused
+KV cache, zero idle timers/pollers, reused overlay panel, download resume logic, and
+all documented gotchas. Eager model load at launch stays — it is the latency tradeoff
+this app exists for; revisit idle eviction only if large-model users complain about RAM.
+
 ## Known limitations / next steps
 
 - **Notarization** needs an Apple Developer account ($99/yr). The release workflow

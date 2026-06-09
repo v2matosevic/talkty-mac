@@ -66,6 +66,10 @@ script and ad-hoc signed (no Apple Developer account needed).
   Neural Engine, absent → Metal (purely opt-in). Generate with `Scripts/make_coreml.sh
   <model>` (torch/coremltools via `uv`; no Xcode needed — coremltools compiles the
   `.mlmodelc`). First ANE load compiles for the device (slow once, OS-cached).
+- **Portable CPU baseline.** `build_whisper.sh` pins `GGML_NATIVE=OFF` +
+  `-march=armv8.4-a+fp16+dotprod` (the M1 floor). Don't remove it: ggml's default
+  `-mcpu=native` bakes the build machine's ISA (M5 picked up `+sme`, an M4+ feature)
+  into the redistributable libs. `TALKTY_GGML_ARCH` overrides for tuned local builds.
 - **Settings decode is lenient — keep it.** `AppSettings`/`UserHints` have a hand-written
   `init(from:)` (`decodeIfPresent ?? default`). `SettingsStore` resets to defaults on any
   decode throw, and the synthesized decoder throws on a missing key — so a new non-optional
@@ -76,8 +80,9 @@ script and ad-hoc signed (no Apple Developer account needed).
 
 - Audio: 16 kHz mono float. Silence-trim RMS threshold 0.01, 100 ms window,
   200 ms safety margin.
-- Whisper: greedy, temperature 0, `best_of` 1, no context carryover; threads =
-  logical/2 capped at 8.
+- Whisper: greedy, temperature 0, `best_of` 1, **`temperature_inc` 0** (whisper's
+  default 0.2 silently enables a 6-step re-decode fallback ladder — keep it off),
+  no context carryover; threads = logical/2 capped at 8.
 - Post-processing order: JoinSegments (re-join `period + lowercase` false
   breaks) → CleanupPunctuation → ApplyReplacements (vocabulary) →
   StripHallucinations (`Thanks/Bye/Subscribe/[MUSIC]/`, 3+ ellipsis, trailing

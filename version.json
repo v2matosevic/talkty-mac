@@ -1,5 +1,5 @@
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
   "download_url": "https://github.com/v2matosevic/talkty-mac/releases/latest",
-  "release_notes": "Native macOS rebuild: Apple Silicon Metal transcription, menu-bar app, global hotkey, type-at-cursor auto-paste, recording volume ducking."
+  "release_notes": "Performance release: single-pass whisper decode (no silent 6x fallback re-decodes), resample/trim moved off the main thread (no UI hitch on hotkey release), zero-allocation audio tap, cached vocabulary regexes, far less menu-bar redraw churn while recording, async history writes. Whisper CPU libs now built against a portable Apple Silicon baseline (M1+) instead of the build machine's chip."
 }
