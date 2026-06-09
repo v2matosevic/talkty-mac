@@ -42,6 +42,8 @@ Scripts/
 Scripts/bootstrap.sh                 # one-time: vendor + build whisper (needs cmake)
 swift build                          # build everything
 .build/debug/smoke <model.bin> <audio.wav> [lang]   # engine smoke test
+# smoke benchmark knobs: TALKTY_RUNS=<n> (median-of-n, warm pass first),
+#                        TALKTY_AUDIO_CTX=<n> (encoder window override)
 ```
 
 `brew install cmake` is required for the whisper build. Xcode is optional —
@@ -90,6 +92,11 @@ script and ad-hoc signed (no Apple Developer account needed).
 - Hotkey default Alt+Q (configurable); ESC cancels during recording.
 - Storage: `~/Library/Application Support/Talkty/` (settings.json, history.json,
   Logs/, Models/). History capped at 50.
+- Runtime flags (`defaults write hr.version2.talkty <key> -bool YES`):
+  `debugLogging` — DEBUG log lines in release builds (gated by default; needs
+  relaunch). `experimentalAudioCtx` — size the encoder window to the clip
+  (read per-take; 3–5× faster short clips in bench, quality on noisy audio
+  unproven — candidate default once real takes validate it).
 
 ## Conventions
 

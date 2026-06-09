@@ -190,6 +190,11 @@ Round two of the optimization sweep — robustness and the long tail:
 - **Experiment flag:** `defaults write hr.version2.talkty experimentalAudioCtx -bool YES`
   sizes the encoder attention window to the clip instead of the full 30 s — whisper's
   documented-experimental speed knob, off by default pending A/B on real takes.
+  Bench (large-v3-turbo, median of 3, identical transcriptions): 2.6 s clip
+  0.554 s → **0.112 s** (5.0×), 6.1 s clip 0.618 s → **0.215 s** (2.9×), 20 s clip
+  0.880 s → 0.687 s (1.3×). Synthetic clean audio — real noisy/accented takes are the
+  open question; if they hold, this becomes the default in 1.3. Reproduce with
+  `TALKTY_RUNS=3 TALKTY_AUDIO_CTX=<n> .build/debug/smoke <model> <wav>`.
 - CI actions bumped to Node 24 majors (checkout v6, cache v5, gh-release v3).
 
 ## Known limitations / next steps
