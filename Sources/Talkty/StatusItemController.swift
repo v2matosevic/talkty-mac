@@ -54,7 +54,7 @@ final class StatusItemController {
             .removeDuplicates()         // …so skip the 10 Hz timer's identical ticks
             .sink { [weak self] total in
                 guard let self, self.state.recordingState == .listening else { return }
-                self.item.button?.title = String(format: " %02d:%02d", total / 60, total % 60)
+                self.item.button?.title = Self.clockTitle(total)
             }
             .store(in: &cancellables)
     }
@@ -105,9 +105,15 @@ final class StatusItemController {
         if let button = item.button {
             button.image = transcribing ? Self.waveformImage : Self.micImage
             button.contentTintColor = recording ? NSColor.systemRed : nil
-            // The live clock is appended by the $elapsed subscription while recording.
-            button.title = recording ? " 00:00" : ""
+            // The $elapsed subscription keeps this ticking while recording.
+            button.title = recording ? Self.clockTitle(Int(state.elapsed)) : ""
         }
+    }
+
+    /// Menu-bar clock next to the glyph — single source for both the initial title
+    /// on entering .listening and the per-second ticks from $elapsed.
+    private static func clockTitle(_ seconds: Int) -> String {
+        String(format: " %02d:%02d", seconds / 60, seconds % 60)
     }
 
     @objc private func openMain() { onOpen?() }
