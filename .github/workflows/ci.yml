@@ -9,13 +9,13 @@ jobs:
   build-test:
     runs-on: macos-14            # Apple Silicon
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install cmake
         run: brew list cmake >/dev/null 2>&1 || brew install cmake
 
       - name: Cache vendored whisper.cpp build
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: Vendor
           key: whisper-${{ runner.os }}-${{ hashFiles('Scripts/bootstrap.sh', 'Scripts/build_whisper.sh') }}
