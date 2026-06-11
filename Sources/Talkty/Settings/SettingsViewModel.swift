@@ -19,6 +19,10 @@ final class SettingsViewModel: ObservableObject {
     @Published var testStatus = ""
     private let testCapture = AudioCaptureService()
 
+    // Mic input volume — the system-wide hardware level (System Settings → Sound →
+    // Input). nil = the selected device doesn't expose a volume control.
+    @Published var micVolume: Float?
+
     // Vocabulary editors (comma-joined <-> [String])
     @Published var vocabularyText: String
     @Published var replacementRows: [ReplacementRow]
@@ -47,6 +51,25 @@ final class SettingsViewModel: ObservableObject {
             .sorted { $0.key < $1.key }
             .map { ReplacementRow(from: $0.key, to: $0.value) }
         self.inputDevices = AudioDevices.inputDevices()
+        refreshMicVolume()
+    }
+
+    // MARK: Mic input volume
+
+    /// Re-read the hardware level for the currently selected device (call when the
+    /// mic selection changes — different devices have different volumes).
+    func refreshMicVolume() {
+        micVolume = MicVolumeService.resolveDevice(uid: draft.selectedMicrophoneId)
+            .flatMap { MicVolumeService.volume(for: $0) }
+    }
+
+    /// Applies immediately (hardware setting, not part of the draft/save cycle).
+    func setMicVolume(_ value: Float) {
+        micVolume = value
+        guard let device = MicVolumeService.resolveDevice(uid: draft.selectedMicrophoneId) else { return }
+        if !MicVolumeService.setVolume(value, for: device) {
+            Log.warning("Mic volume: device \(device) rejected write")
+        }
     }
 
     // MARK: Save / cancel

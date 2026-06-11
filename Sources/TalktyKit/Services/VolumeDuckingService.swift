@@ -13,11 +13,6 @@ public final class VolumeDuckingService: @unchecked Sendable {   // internally N
     // transition clean even on a rapid record→stop.
     private let queue = DispatchQueue(label: "hr.version2.talkty.volumeduck", qos: .userInitiated)
 
-    // 'vmvc' — kAudioHardwareServiceDeviceProperty_VirtualMainVolume, defined directly
-    // for SDK independence (the symbol was renamed from VirtualMasterVolume).
-    private static let virtualMainVolume: AudioObjectPropertySelector =
-        AudioObjectPropertySelector(fourCC("vmvc"))
-
     public init() {}
 
     /// Fade the output device down to `level` (a fraction of full volume) over
@@ -85,7 +80,7 @@ public final class VolumeDuckingService: @unchecked Sendable {   // internally N
 
     private static func volumeAddress() -> AudioObjectPropertyAddress {
         AudioObjectPropertyAddress(
-            mSelector: virtualMainVolume,
+            mSelector: CoreAudioSupport.virtualMainVolume,
             mScope: kAudioObjectPropertyScopeOutput,
             mElement: kAudioObjectPropertyElementMain)
     }
@@ -107,10 +102,4 @@ public final class VolumeDuckingService: @unchecked Sendable {   // internally N
         guard AudioObjectHasProperty(device, &addr) else { return false }
         return AudioObjectSetPropertyData(device, &addr, 0, nil, UInt32(MemoryLayout<Float32>.size), &v) == noErr
     }
-}
-
-private func fourCC(_ s: String) -> UInt32 {
-    var result: UInt32 = 0
-    for ch in s.utf8.prefix(4) { result = (result << 8) + UInt32(ch) }
-    return result
 }

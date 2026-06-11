@@ -93,6 +93,22 @@ struct SettingsSections: View {
                         ForEach(vm.inputDevices) { d in Text(d.name).tag(String?.some(d.uid)) }
                     }
                     .labelsHidden().pickerStyle(.menu).tint(Theme.textPrimary)
+                    .onChange(of: vm.draft.selectedMicrophoneId) { vm.refreshMicVolume() }
+
+                    if vm.micVolume != nil {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text("Input volume").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                                Spacer()
+                                Text("\(Int((vm.micVolume ?? 0) * 100))%")
+                                    .font(Theme.mono(12)).foregroundStyle(Theme.textPrimary)
+                            }
+                            Slider(value: micVolumeBinding, in: 0...1)
+                                .controlSize(.small).tint(Theme.green)
+                            Text("System-wide input level — the same slider as System Settings → Sound.")
+                                .font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+                        }
+                    }
 
                     HStack(spacing: 10) {
                         Button { vm.toggleTest() } label: {
@@ -112,6 +128,9 @@ struct SettingsSections: View {
     }
     private var micBinding: Binding<String?> {
         Binding(get: { vm.draft.selectedMicrophoneId }, set: { vm.draft.selectedMicrophoneId = $0 })
+    }
+    private var micVolumeBinding: Binding<Double> {
+        Binding(get: { Double(vm.micVolume ?? 0) }, set: { vm.setMicVolume(Float($0)) })
     }
 
     // MARK: Language
