@@ -103,8 +103,7 @@ struct SettingsSections: View {
                                 Text("\(Int((vm.micVolume ?? 0) * 100))%")
                                     .font(Theme.mono(12)).foregroundStyle(Theme.textPrimary)
                             }
-                            Slider(value: micVolumeBinding, in: 0...1)
-                                .controlSize(.small).tint(Theme.green)
+                            NativeSlider(value: micVolumeBinding)
                             Text("System-wide input level — the same slider as System Settings → Sound.")
                                 .font(.system(size: 11)).foregroundStyle(Theme.textFaint)
                         }

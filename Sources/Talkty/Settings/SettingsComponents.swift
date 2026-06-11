@@ -1,6 +1,36 @@
+import AppKit
 import SwiftUI
 
 /// Shared settings UI atoms, styled to the Zinc design language.
+
+/// AppKit-backed slider. The settings window is movable-by-background and SwiftUI's
+/// Slider doesn't refuse `mouseDownCanMoveWindow` — dragging its knob drags the whole
+/// window. A real NSSlider refuses it by AppKit contract, so the knob drags normally.
+struct NativeSlider: NSViewRepresentable {
+    @Binding var value: Double
+    var range: ClosedRange<Double> = 0...1
+
+    func makeNSView(context: Context) -> NSSlider {
+        let slider = NSSlider(value: value, minValue: range.lowerBound, maxValue: range.upperBound,
+                              target: context.coordinator, action: #selector(Coordinator.changed(_:)))
+        slider.controlSize = .small
+        slider.isContinuous = true
+        return slider
+    }
+
+    func updateNSView(_ slider: NSSlider, context: Context) {
+        context.coordinator.binding = $value
+        if abs(slider.doubleValue - value) > 0.0001 { slider.doubleValue = value }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator($value) }
+
+    @MainActor final class Coordinator: NSObject {   // NSSlider fires its action on main
+        var binding: Binding<Double>
+        init(_ binding: Binding<Double>) { self.binding = binding }
+        @objc func changed(_ sender: NSSlider) { binding.wrappedValue = sender.doubleValue }
+    }
+}
 
 struct SectionLabel: View {
     let text: String
