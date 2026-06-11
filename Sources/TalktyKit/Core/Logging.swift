@@ -17,6 +17,12 @@ public final class Log: @unchecked Sendable {
     private init() {
         let stamp = Log.fileStamp(Date())
         fileURL = AppPaths.logsDir.appendingPathComponent("talkty_\(stamp).log")
+        // The file sink (session file + latest.log symlink) belongs to the app alone.
+        // smoke and TalktyTests link TalktyKit too, and a CLI run must not steal the
+        // symlink out from under a live app session or litter stub session files next
+        // to real ones (it derailed a real debugging session). Bare executables have
+        // no bundle identifier; everyone still mirrors to the unified log.
+        guard Bundle.main.bundleIdentifier == "hr.version2.talkty" else { return }
         FileManager.default.createFile(atPath: fileURL.path, contents: nil)
         handle = try? FileHandle(forWritingTo: fileURL)
         // Stable path for live tailing across launches: Logs/latest.log → this session.
