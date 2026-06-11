@@ -16,6 +16,8 @@ auto-pasted at the cursor).
   (clipboard-safe keystroke injection) — ideal for editors and terminals
 - **Recording volume ducking** — fades background audio down while you speak so the
   mic captures you cleanly, then fades it back
+- **Quiet-mic friendly** — boost-only auto-gain levels each take before transcription,
+  and a mic input volume slider lives right in Settings
 - **Smart post-processing** — re-joins false sentence breaks, strips Whisper
   hallucinations (“Thanks for watching”, `[MUSIC]`…), applies a custom coding vocabulary
 - **In-app model manager** — download Whisper models (Fast / Balanced / Accurate) with resume

@@ -1,5 +1,5 @@
 {
-  "version": "1.2.0",
+  "version": "1.3.0",
   "download_url": "https://github.com/v2matosevic/talkty-mac/releases/latest",
-  "release_notes": "Hardening release: the transcription timeout now actually cancels a stuck run (cooperative abort, engine never wedges), model downloads stream in chunks (much less CPU during downloads), less redraw work while transcribing, and the whole codebase is clean under Swift strict concurrency. Adds two opt-in experiment flags (audio_ctx sizing, debug logging on installed builds)."
+  "release_notes": "Mic level release: boost-only auto-gain normalizes each take before transcription (quiet mics no longer get speech trimmed as silence; disableAutoGain defaults flag to opt out), and Settings gains a system input volume slider next to the mic picker. The experimental audio_ctx flag stays off after failing real-take validation — long takes garbled while it was on; details in docs/REBUILD.md."
 }
