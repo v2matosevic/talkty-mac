@@ -207,6 +207,20 @@ Round two of the optimization sweep — robustness and the long tail:
   in-app vs in smoke.
 - CI actions bumped to Node 24 majors (checkout v6, cache v5, gh-release v3).
 
+### Mic level work (2026-06-12)
+
+- **Auto-gain.** Boost-only normalization in `finalize()`, between resample and
+  silence-trim: reference = 99.5th-percentile |sample| (the absolute peak is always
+  the hotkey's key click — it hard-clips instead of blocking the boost), target 0.9,
+  cap 10×, no-op under 1.1× or on dead air. Fixes a latent trim bug: the fixed 0.01
+  RMS threshold ate real speech from quiet mics. Kill switch:
+  `defaults write hr.version2.talkty disableAutoGain -bool YES` (read per-take).
+- **Input volume slider** in Settings → Microphone via `MicVolumeService`
+  (CoreAudio): virtual-main-volume on input scope with per-channel
+  `VolumeScalar` fallback; hidden for fixed-gain devices. It's the System Settings
+  input slider — hardware-level, system-wide — and applies immediately (not part
+  of the draft/save cycle).
+
 ## Known limitations / next steps
 
 - **Notarization** needs an Apple Developer account ($99/yr). The release workflow

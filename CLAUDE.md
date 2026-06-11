@@ -81,7 +81,9 @@ script and ad-hoc signed (no Apple Developer account needed).
 ## Behavior parity notes (from the Windows original)
 
 - Audio: 16 kHz mono float. Silence-trim RMS threshold 0.01, 100 ms window,
-  200 ms safety margin.
+  200 ms safety margin. Mac addition (not in the Windows original): boost-only
+  auto-gain runs between resample and trim — 99.5th-percentile peak → 0.9,
+  capped at 10×, so a quiet mic can't get its speech trimmed as "silence".
 - Whisper: greedy, temperature 0, `best_of` 1, **`temperature_inc` 0** (whisper's
   default 0.2 silently enables a 6-step re-decode fallback ladder — keep it off),
   no context carryover; threads = logical/2 capped at 8.
@@ -94,7 +96,8 @@ script and ad-hoc signed (no Apple Developer account needed).
   Logs/, Models/). History capped at 50.
 - Runtime flags (`defaults write hr.version2.talkty <key> -bool YES`):
   `debugLogging` — DEBUG log lines in release builds (gated by default; needs
-  relaunch). `experimentalAudioCtx` — size the encoder window to the clip
+  relaunch). `disableAutoGain` — kill switch for the take auto-gain (read
+  per-take). `experimentalAudioCtx` — size the encoder window to the clip
   (read per-take). **Failed real-take validation 2026-06-11**: in-app takes
   over ~4 s (ctx > the 256 floor) came out as repetition garbage on macOS 27
   beta, while the identical path in smoke stayed clean — keep it OFF; see
