@@ -192,9 +192,19 @@ Round two of the optimization sweep — robustness and the long tail:
   documented-experimental speed knob, off by default pending A/B on real takes.
   Bench (large-v3-turbo, median of 3, identical transcriptions): 2.6 s clip
   0.554 s → **0.112 s** (5.0×), 6.1 s clip 0.618 s → **0.215 s** (2.9×), 20 s clip
-  0.880 s → 0.687 s (1.3×). Synthetic clean audio — real noisy/accented takes are the
-  open question; if they hold, this becomes the default in 1.3. Reproduce with
+  0.880 s → 0.687 s (1.3×). Reproduce with
   `TALKTY_RUNS=3 TALKTY_AUDIO_CTX=<n> .build/debug/smoke <model> <wav>`.
+  **Real-take validation FAILED (2026-06-11, macOS 27.0 beta, app 1.2.0):** every
+  in-app take over ~4 s (computed ctx 350–841) transcribed as repetition garbage
+  (`", , , ,"`, `"UL, UL, UL…"`); takes at the 256 floor stayed clean. Flag off →
+  immediately clean again. The failure does NOT reproduce in smoke on the same
+  OS/model — not with the failing ctx values, real mic audio captured through the
+  app's exact tap+resample code (`TALKTY_VOCAB`/`TALKTY_WARM_CTX` knobs replicate
+  the prompt and warmup sequence), so the in-app trigger is still unidentified.
+  Confounder: the flag first went live in-app the same day as the macOS beta update
+  (1.1.0 ignored it). Default-on is dead until this is root-caused; next step is a
+  debugLogging-gated dump of finalized takes to disk to compare what whisper hears
+  in-app vs in smoke.
 - CI actions bumped to Node 24 majors (checkout v6, cache v5, gh-release v3).
 
 ## Known limitations / next steps

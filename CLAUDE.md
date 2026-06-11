@@ -95,8 +95,10 @@ script and ad-hoc signed (no Apple Developer account needed).
 - Runtime flags (`defaults write hr.version2.talkty <key> -bool YES`):
   `debugLogging` — DEBUG log lines in release builds (gated by default; needs
   relaunch). `experimentalAudioCtx` — size the encoder window to the clip
-  (read per-take; 3–5× faster short clips in bench, quality on noisy audio
-  unproven — candidate default once real takes validate it).
+  (read per-take). **Failed real-take validation 2026-06-11**: in-app takes
+  over ~4 s (ctx > the 256 floor) came out as repetition garbage on macOS 27
+  beta, while the identical path in smoke stayed clean — keep it OFF; see
+  REBUILD.md before retrying.
 
 ## Conventions
 
