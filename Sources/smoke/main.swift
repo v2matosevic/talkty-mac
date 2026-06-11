@@ -58,16 +58,26 @@ print("model loaded in \(String(format: "%.2f", -tLoad.timeIntervalSinceNow))s")
 // Benchmark knobs (defaults preserve the original single-run behavior):
 //   TALKTY_AUDIO_CTX=<n>  encoder attention window override (0/unset = full 30 s)
 //   TALKTY_RUNS=<n>       timed runs after one untimed warm pass (Metal compile)
+//   TALKTY_WARM_CTX=<n>   audio_ctx for the warm pass (default: same as timed) —
+//                         lets the bench replicate the app's warmup(full) → take(shrunk)
+//   TALKTY_VOCAB=1        pass the app's default vocabulary initial_prompt
 let audioCtx = Int32(ProcessInfo.processInfo.environment["TALKTY_AUDIO_CTX"] ?? "") ?? 0
 let runs = Int(ProcessInfo.processInfo.environment["TALKTY_RUNS"] ?? "") ?? 1
+let warmCtx = Int32(ProcessInfo.processInfo.environment["TALKTY_WARM_CTX"] ?? "") ?? audioCtx
+let prompt: String? = ProcessInfo.processInfo.environment["TALKTY_VOCAB"] == "1"
+    ? DefaultVocabulary.promptContext + " Terminology: "
+        + DefaultVocabulary.codingTerms.prefix(80).joined(separator: ", ") + "."
+    : nil
 if audioCtx > 0 { print("audio_ctx override: \(audioCtx)") }
+if runs > 1, warmCtx != audioCtx { print("warm pass audio_ctx: \(warmCtx)") }
+if prompt != nil { print("vocab initial_prompt: on (app default)") }
 
 var text = ""
-if runs > 1 { _ = try engine.transcribeSegments(samples: samples, language: language, audioCtx: audioCtx) }
+if runs > 1 { _ = try engine.transcribeSegments(samples: samples, language: language, initialPrompt: prompt, audioCtx: warmCtx) }
 var times: [Double] = []
 for _ in 0..<runs {
     let tRun = Date()
-    let segments = try engine.transcribeSegments(samples: samples, language: language, audioCtx: audioCtx)
+    let segments = try engine.transcribeSegments(samples: samples, language: language, initialPrompt: prompt, audioCtx: audioCtx)
     times.append(-tRun.timeIntervalSinceNow)
     text = segments.joined().trimmingCharacters(in: .whitespacesAndNewlines)
 }
