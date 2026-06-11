@@ -83,6 +83,50 @@ do {
     check(!s.hints.hasCompletedOnboarding, "lenient decode: nested missing key → default")
 }
 
+// MARK: Auto-gain
+do {
+    // Quiet speech boosted toward target: 0.05-peak sine → 0.9 cap is 18×, so the 10× cap rules.
+    let quiet = (0..<16000).map { Float(sin(Double($0) * 0.05)) * 0.05 }
+    let (boosted, gain) = AudioCaptureService.autoGain(quiet)
+    check(abs(gain - 10) < 0.01, "auto-gain: max-gain cap", "gain \(gain)")
+    check(abs(boosted.max()! - 0.5) < 0.02, "auto-gain: samples scaled", "peak \(boosted.max()!)")
+
+    // Moderately quiet: 0.3-peak sine → normalized to ~0.9 (gain 3×, under the cap).
+    let moderate = (0..<16000).map { Float(sin(Double($0) * 0.05)) * 0.3 }
+    let (leveled, gain2) = AudioCaptureService.autoGain(moderate)
+    check(abs(gain2 - 3) < 0.1, "auto-gain: normalizes to target", "gain \(gain2)")
+    check(leveled.max()! <= 1.0, "auto-gain: never exceeds full scale")
+
+    // Already loud → untouched (boost-only).
+    let loud = (0..<16000).map { Float(sin(Double($0) * 0.05)) * 0.85 }
+    let (same, gain3) = AudioCaptureService.autoGain(loud)
+    eq(gain3, 1, "auto-gain: loud audio untouched")
+    check(same == loud, "auto-gain: loud samples identical")
+
+    // Dead air → untouched (don't amplify a silent room into fake speech).
+    let (silence, gain4) = AudioCaptureService.autoGain([Float](repeating: 0, count: 16000))
+    eq(gain4, 1, "auto-gain: silence untouched")
+    check(silence.allSatisfy { $0 == 0 }, "auto-gain: silence stays silent")
+
+    // A single key-click transient must not block the boost (percentile reference,
+    // not absolute peak): quiet speech + one 0.95 spike still gets levelled, and the
+    // spike hard-clips at ±1 instead of capping the gain at ~1×.
+    var clicky = quiet
+    clicky[100] = 0.95
+    let (declicked, gain5) = AudioCaptureService.autoGain(clicky)
+    check(gain5 > 5, "auto-gain: click doesn't block boost", "gain \(gain5)")
+    check(declicked.max()! <= 1.0, "auto-gain: click clipped to full scale")
+
+    // Quiet speech survives the silence trim after gain — the regression that
+    // motivated this: pre-gain, 0.005-RMS speech is below the 0.01 trim threshold.
+    let whisper = (0..<32000).map { Float(sin(Double($0) * 0.05)) * 0.007 }
+    let trimmedRaw = AudioCaptureService.trimSilence(whisper)
+    let (gained, _) = AudioCaptureService.autoGain(whisper)
+    let trimmedGained = AudioCaptureService.trimSilence(gained)
+    eq(trimmedRaw.count, 32000, "trim: sub-threshold speech passes through untrimmed (all-quiet)")
+    check(trimmedGained.count > 16000, "auto-gain: quiet speech survives trim", "\(trimmedGained.count)")
+}
+
 // MARK: Catalog / language resolution
 eq(ModelCatalog.spec(for: "base.en").id, "base.en", "catalog lookup")
 check(ModelCatalog.spec(for: "large-v3-turbo").multilingual, "turbo is multilingual")

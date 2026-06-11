@@ -73,12 +73,20 @@ public final class AudioCaptureService: @unchecked Sendable {
         return RawTake(samples: mono, sampleRate: hwSampleRate)
     }
 
-    /// Resample a raw take to 16 kHz mono and trim silence. CPU-bound over the whole
-    /// take — call off the main thread.
+    /// Resample a raw take to 16 kHz mono, auto-level it, and trim silence. CPU-bound
+    /// over the whole take — call off the main thread. Gain runs BEFORE the trim so the
+    /// fixed RMS threshold sees normalized audio — a quiet mic otherwise gets real
+    /// speech trimmed away as "silence".
     public static func finalize(_ take: RawTake) -> [Float] {
         let resampled = resampleTo16k(take.samples, from: take.sampleRate)
-        let trimmed = trimSilence(resampled)
-        Log.info("Take finalized: \(trimmed.count) samples (\(String(format: "%.2f", Double(trimmed.count)/16000))s)")
+        var gain: Float = 1
+        var leveled = resampled
+        if !UserDefaults.standard.bool(forKey: "disableAutoGain") {
+            (leveled, gain) = autoGain(resampled)
+        }
+        let trimmed = trimSilence(leveled)
+        Log.info("Take finalized: \(trimmed.count) samples (\(String(format: "%.2f", Double(trimmed.count)/16000))s"
+            + (gain > 1 ? String(format: ", gain %.1f×)", gain) : ")"))
         return trimmed
     }
 
@@ -180,6 +188,32 @@ public final class AudioCaptureService: @unchecked Sendable {
             out[i] = a + (b - a) * frac
         }
         return out
+    }
+
+    // MARK: Auto-gain (boost-only normalization, kill switch: `disableAutoGain` defaults flag)
+
+    /// Boost a quiet take toward full scale. The reference level is the 99.5th
+    /// percentile of |sample|, not the absolute peak — every take starts with the
+    /// hotkey's key-click transient, and one click must not block the boost for
+    /// 10 s of quiet speech. The few samples above the percentile hard-clip to ±1
+    /// (inaudible to whisper, and clicks carry no speech). Boost-only: audio that is
+    /// already loud passes through untouched; gain is capped so near-silent takes
+    /// don't have their noise floor amplified into fake speech.
+    static func autoGain(_ samples: [Float], targetPeak: Float = 0.9, maxGain: Float = 10) -> (samples: [Float], gain: Float) {
+        guard samples.count > 16 else { return (samples, 1) }
+        var magnitudes = [Float](repeating: 0, count: samples.count)
+        vDSP_vabs(samples, 1, &magnitudes, 1, vDSP_Length(samples.count))
+        vDSP_vsort(&magnitudes, vDSP_Length(magnitudes.count), 1)
+        let reference = magnitudes[Int(Float(magnitudes.count - 1) * 0.995)]
+        guard reference > 1e-5 else { return (samples, 1) }   // dead air — nothing to level
+        let gain = min(maxGain, targetPeak / reference)
+        guard gain > 1.1 else { return (samples, 1) }   // near level — a <10% boost isn't worth the copy
+        var out = [Float](repeating: 0, count: samples.count)
+        var g = gain
+        vDSP_vsmul(samples, 1, &g, &out, 1, vDSP_Length(samples.count))
+        var lo: Float = -1, hi: Float = 1
+        vDSP_vclip(out, 1, &lo, &hi, &out, 1, vDSP_Length(out.count))
+        return (out, gain)
     }
 
     // MARK: Silence trim (RMS, 100 ms window, 0.01 threshold, 200 ms margin)
