@@ -49,6 +49,8 @@ struct SettingsSections: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             modelSection
+            cloudSection
+            promptingSection
             microphoneSection
             languageSection
             behaviorSection
@@ -57,12 +59,43 @@ struct SettingsSections: View {
         }
     }
 
+    // MARK: Prompting
+
+    /// The ✦ "Prompting" feature: pick which OpenRouter model rewrites a dictation into a
+    /// structured coding-agent prompt. The picked one leads; the rest fall back automatically.
+    private var promptingSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel(text: "Prompting")
+            Card {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Hover the recording pill and tap ✦ to turn a take into a clean, structured prompt for a coding AI agent (Claude Code, Codex, Cursor) instead of plain text.")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Divider().background(Theme.border)
+                    Text("Model that writes the prompt").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                    VStack(spacing: 0) {
+                        let models = PromptingModels.all
+                        ForEach(Array(models.enumerated()), id: \.element.id) { idx, m in
+                            PromptingModelRow(model: m, selectedId: $vm.draft.promptingModelId)
+                            if idx < models.count - 1 {
+                                Divider().background(Theme.border).padding(.vertical, 8)
+                            }
+                        }
+                    }
+                    Text("Uses your OpenRouter key (above). If a model is unavailable, Talkty falls back to the others automatically — your dictation is never lost.")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
     // MARK: Models
 
     private var modelSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             SectionLabel(text: "Model")
-            ForEach(ModelTier.allCases, id: \.self) { tier in
+            ForEach(ModelTier.localTiers, id: \.self) { tier in
                 let specs = ModelCatalog.models(in: tier)
                 if !specs.isEmpty {
                     Text(tier.title).font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textMuted)
@@ -76,6 +109,54 @@ struct SettingsSections: View {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // MARK: Cloud (OpenRouter)
+
+    /// Opt-in online transcription + the key that also powers Prompting. Local Whisper
+    /// stays the private, offline default; nothing here sends audio unless a cloud model
+    /// is selected.
+    private var cloudSection: some View {
+        let cloud = ModelCatalog.cloudModels
+        return VStack(alignment: .leading, spacing: 10) {
+            SectionLabel(text: "Cloud (OpenRouter)")
+            Card {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(cloud.enumerated()), id: \.element.id) { idx, spec in
+                        ModelRow(spec: spec, selectedId: $vm.draft.modelId, models: models)
+                        if idx < cloud.count - 1 {
+                            Divider().background(Theme.border).padding(.vertical, 8)
+                        }
+                    }
+                    Divider().background(Theme.border).padding(.vertical, 12)
+                    HStack {
+                        Text("OpenRouter API key").font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                        if vm.hasStoredKey {
+                            Pill(text: "Saved", color: Theme.green)
+                        }
+                        Spacer()
+                        if vm.hasStoredKey {
+                            Button("Remove") { vm.removeOpenRouterKey() }
+                                .buttonStyle(.plain)
+                                .font(.system(size: 11)).foregroundStyle(Theme.red)
+                        }
+                    }
+                    .padding(.bottom, 6)
+                    SecureField(vm.hasStoredKey ? "Enter a new key to replace the saved one" : "sk-or-…",
+                                text: $vm.openRouterKey)
+                        .textFieldStyle(.plain)
+                        .font(Theme.mono(12))
+                        .foregroundStyle(Theme.textPrimary)
+                        .padding(8)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.bg))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
+                    Text("Stored in your macOS Keychain — never in settings. Get a key at openrouter.ai/keys. Cloud models send audio to OpenRouter and cost per use; local models stay fully offline. The same key powers Prompting (the ✦ toggle on the recording pill).")
+                        .font(.system(size: 11)).foregroundStyle(Theme.textFaint)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 6)
                 }
             }
         }
@@ -266,6 +347,31 @@ struct SettingsSections: View {
     }
 }
 
+/// A radio row for picking the Prompting model — name, optional Recommended badge,
+/// and a one-line descriptor. No download/size (these are cloud models).
+private struct PromptingModelRow: View {
+    let model: PromptingModel
+    @Binding var selectedId: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: selectedId == model.id ? "largecircle.fill.circle" : "circle")
+                .font(.system(size: 15))
+                .foregroundStyle(selectedId == model.id ? Theme.purple : Theme.textFaint)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(model.displayName).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                    if model.recommended { Pill(text: "Recommended", color: Theme.green) }
+                }
+                Text(model.detail).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+            }
+            Spacer()
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { selectedId = model.id }
+    }
+}
+
 /// A single model row: name, badges, size, and a select/download/progress control.
 private struct ModelRow: View {
     let spec: ModelSpec
@@ -281,7 +387,7 @@ private struct ModelRow: View {
                 HStack(spacing: 6) {
                     Text(spec.displayName).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary)
                     if spec.recommended { Pill(text: "Recommended", color: Theme.green) }
-                    if spec.multilingual { Pill(text: "Multilingual", color: Theme.purple) }
+                    if spec.multilingual && !spec.isCloud { Pill(text: "Multilingual", color: Theme.purple) }
                 }
                 Text("\(spec.detail)  ·  \(spec.sizeDisplay)").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
             }
@@ -289,26 +395,31 @@ private struct ModelRow: View {
             control
         }
         .contentShape(Rectangle())
-        .onTapGesture { if models.isDownloaded(spec.id) { selectedId = spec.id } }
+        // Cloud profiles are always selectable (no download); local needs the file present.
+        .onTapGesture { if spec.isCloud || models.isDownloaded(spec.id) { selectedId = spec.id } }
     }
 
     @ViewBuilder private var control: some View {
-        switch models.states[spec.id] {
-        case .downloading(let p):
-            VStack(alignment: .trailing, spacing: 3) {
-                LevelBar(fraction: p.fraction, color: Theme.purple, height: 5).frame(width: 70)
-                Text("\(Int(p.fraction * 100))%").font(Theme.mono(10)).foregroundStyle(Theme.textMuted)
-            }
-            Button { models.cancel(spec.id) } label: {
-                Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textFaint)
-            }.buttonStyle(.plain)
-        default:
-            if models.isDownloaded(spec.id) {
-                Pill(text: "Downloaded", color: Theme.green)
-            } else {
-                Button { models.download(spec) } label: {
-                    Image(systemName: "arrow.down.circle").font(.system(size: 16)).foregroundStyle(Theme.purple)
+        if spec.isCloud {
+            Pill(text: "Cloud", color: Theme.purple)
+        } else {
+            switch models.states[spec.id] {
+            case .downloading(let p):
+                VStack(alignment: .trailing, spacing: 3) {
+                    LevelBar(fraction: p.fraction, color: Theme.purple, height: 5).frame(width: 70)
+                    Text("\(Int(p.fraction * 100))%").font(Theme.mono(10)).foregroundStyle(Theme.textMuted)
+                }
+                Button { models.cancel(spec.id) } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textFaint)
                 }.buttonStyle(.plain)
+            default:
+                if models.isDownloaded(spec.id) {
+                    Pill(text: "Downloaded", color: Theme.green)
+                } else {
+                    Button { models.download(spec) } label: {
+                        Image(systemName: "arrow.down.circle").font(.system(size: 16)).foregroundStyle(Theme.purple)
+                    }.buttonStyle(.plain)
+                }
             }
         }
     }

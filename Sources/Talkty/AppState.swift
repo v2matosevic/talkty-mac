@@ -21,6 +21,14 @@ final class AppState: ObservableObject {
     @Published var statusText = "Ready"
     @Published var updateAvailable: UpdateInfo? = nil
 
+    /// "Prompting" mode for the CURRENT take: when on, the finished transcription is
+    /// expanded into a structured coding-agent prompt before output. Toggled by the
+    /// overlay sparkle; resets to off at the start of every recording (per-take).
+    @Published var promptingMode = false
+    /// Mouse is over the recording pill — reveals the sparkle toggle. Driven by an
+    /// AppKit tracking area (the overlay panel is non-key, so SwiftUI hover is unreliable).
+    @Published var overlayHovering = false
+
     var elapsedDisplay: String {
         let total = Int(elapsed)
         return String(format: "%02d:%02d", total / 60, total % 60)

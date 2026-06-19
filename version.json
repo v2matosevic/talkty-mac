@@ -1,5 +1,5 @@
 {
-  "version": "1.3.0",
+  "version": "1.4.0",
   "download_url": "https://github.com/v2matosevic/talkty-mac/releases/latest",
-  "release_notes": "Mic level release: boost-only auto-gain normalizes each take before transcription (quiet mics no longer get speech trimmed as silence; disableAutoGain defaults flag to opt out), and Settings gains a system input volume slider next to the mic picker. The experimental audio_ctx flag stays off after failing real-take validation — long takes garbled while it was on; details in docs/REBUILD.md."
+  "release_notes": "Cloud transcription + Prompting. Cloud transcription (opt-in) via OpenRouter — GPT-4o Transcribe, Whisper Large V3, Qwen3 ASR and more for higher accuracy when you want it; local Whisper stays the private, offline default. New Prompting mode: hover the recording pill and tap the sparkle to turn a dictation into a clean, structured prompt for a coding AI agent (Claude Code, Codex, Cursor), with a research-backed prompt builder and a user-selectable, fast-by-default model. Your API key is stored in the macOS Keychain, never on disk. Fixes: a crash when reopening Settings, and the repeated Keychain password prompt when using your key."
 }

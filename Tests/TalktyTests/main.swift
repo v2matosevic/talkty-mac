@@ -127,6 +127,63 @@ do {
     check(trimmedGained.count > 16000, "auto-gain: quiet speech survives trim", "\(trimmedGained.count)")
 }
 
+// MARK: Cloud transcription — WAV encoding
+do {
+    let samples = [Float](repeating: 0.5, count: 100)
+    let wav = CloudTranscriber.encodeWav(samples, sampleRate: 16000)
+    eq(wav.count, 44 + 100 * 2, "wav: header (44) + 16-bit samples")
+    eq(String(decoding: wav.prefix(4), as: UTF8.self), "RIFF", "wav: RIFF magic")
+    eq(String(decoding: wav[8..<12], as: UTF8.self), "WAVE", "wav: WAVE format")
+    eq(String(decoding: wav[36..<40], as: UTF8.self), "data", "wav: data chunk")
+    // sample rate 16000 = 0x3E80, little-endian at byte offset 24
+    check(wav[24] == 0x80 && wav[25] == 0x3E, "wav: sample rate 16000 LE")
+    // first sample 0.5 → Int16(16383) = 0x3FFF, little-endian at offset 44
+    check(wav[44] == 0xFF && wav[45] == 0x3F, "wav: sample scaled to 16-bit LE")
+    eq(CloudTranscriber.encodeWav([], sampleRate: 16000).count, 44, "wav: empty → header only")
+}
+
+// MARK: Cloud catalog
+do {
+    let cloud = ModelCatalog.cloudModels
+    eq(cloud.count, 5, "cloud: 5 cloud models")
+    check(cloud.allSatisfy { $0.isCloud }, "cloud: all isCloud")
+    check(cloud.allSatisfy { $0.openRouterModelId != nil }, "cloud: all carry an OpenRouter slug")
+    check(cloud.allSatisfy { $0.isDownloaded }, "cloud: report downloaded (nothing to fetch)")
+    check(cloud.allSatisfy { $0.tier == .cloud }, "cloud: tier == .cloud")
+    let gpt = ModelCatalog.spec(for: "cloud-gpt4o-transcribe")
+    check(gpt.openRouterModelId == "openai/gpt-4o-transcribe", "cloud: gpt4o slug", gpt.openRouterModelId ?? "nil")
+    check(gpt.recommended, "cloud: gpt4o is recommended")
+    check(!ModelCatalog.spec(for: "base.en").isCloud, "local: base.en is not cloud")
+    check(ModelTier.localTiers.allSatisfy { $0 != .cloud }, "localTiers excludes cloud")
+}
+
+// MARK: Prompt refinement — fails safe with no key (no network call)
+let refineEmpty = await PromptRefinementService().refine("rename foo to bar", apiKey: "")
+check(refineEmpty == nil, "refine: empty key → nil (fails safe to raw transcription)")
+
+// MARK: Prompting model picker + fallback chain
+do {
+    eq(PromptingModels.defaultId, "google/gemini-3.1-flash-lite", "prompting: default is Gemini Flash Lite (fast)")
+    eq(PromptingModels.all.count, 4, "prompting: 4 selectable models")
+    check(PromptingModels.all.first?.id == PromptingModels.defaultId, "prompting: default leads the picker")
+    check(PromptingModels.all.first?.recommended == true, "prompting: default is the recommended one")
+    check(PromptingModels.isKnown("minimax/minimax-m3"), "prompting: MiniMax M3 still selectable")
+    // Chain leads with the chosen primary, then the rest (deduped), all 4 present.
+    let chain = PromptingModels.chain(primary: "anthropic/claude-haiku-4.5")
+    eq(chain.first, "anthropic/claude-haiku-4.5", "chain: chosen primary leads")
+    eq(chain.count, 4, "chain: all models, no dupes")
+    eq(Set(chain).count, 4, "chain: no duplicate slugs")
+    // Unknown id falls back to the default order led by the default.
+    eq(PromptingModels.chain(primary: "bogus/model").first, PromptingModels.defaultId, "chain: unknown → default leads")
+    // Setting round-trips and an OLD json without the key defaults to MiniMax M3.
+    var s = AppSettings(); s.promptingModelId = "google/gemini-3.1-flash-lite"
+    let back = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(s))
+    eq(back.promptingModelId, "google/gemini-3.1-flash-lite", "prompting: setting round-trips")
+    let oldJSON = Data(#"{"modelId":"base.en"}"#.utf8)
+    eq(try JSONDecoder().decode(AppSettings.self, from: oldJSON).promptingModelId,
+       PromptingModels.defaultId, "prompting: missing key → MiniMax M3 default")
+}
+
 // MARK: Catalog / language resolution
 eq(ModelCatalog.spec(for: "base.en").id, "base.en", "catalog lookup")
 check(ModelCatalog.spec(for: "large-v3-turbo").multilingual, "turbo is multilingual")

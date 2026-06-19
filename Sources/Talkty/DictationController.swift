@@ -13,6 +13,7 @@ final class DictationController {
 
     private let audio = AudioCaptureService()
     let transcription = TranscriptionService()
+    private let promptRefiner = PromptRefinementService()
     private let clipboard = ClipboardService()
     private let autoPaste = AutoPasteService()
     private let ducking = VolumeDuckingService()
@@ -85,7 +86,7 @@ final class DictationController {
             return
         }
         state.recordingState = .loadingModel
-        state.statusText = "Loading model…"
+        state.statusText = spec.isCloud ? "Checking cloud key…" : "Loading model…"
         let useGPU = settings.settings.useGPU
         let transcription = self.transcription
         Log.info("Load model: \(spec.id) (gpu=\(useGPU))…")
@@ -97,7 +98,8 @@ final class DictationController {
             await MainActor.run { [weak self] in
                 self?.state.modelLoaded = ok
                 self?.state.recordingState = ok ? .idle : .noModel
-                self?.state.statusText = ok ? "Ready" : "Model failed to load"
+                self?.state.statusText = ok ? "Ready"
+                    : (spec.isCloud ? "Add OpenRouter API key in Settings" : "Model failed to load")
             }
         }
     }
@@ -156,6 +158,9 @@ final class DictationController {
             notify("Couldn't start recording", "\(error.localizedDescription)")
             return
         }
+        // Prompting is per-take: every recording starts with it OFF; the user toggles
+        // the overlay sparkle on during the take if they want a refined agent prompt.
+        state.promptingMode = false
         state.recordingState = .listening
         state.statusText = "Listening…"
         state.elapsed = 0
@@ -179,12 +184,37 @@ final class DictationController {
 
         let settingsSnapshot = settings.settings
         let transcription = self.transcription
+        let promptRefiner = self.promptRefiner
+        let promptMode = state.promptingMode   // captured for THIS take
         // Resample + trim + whisper all run off the main actor; only finish() hops back.
         Task.detached(priority: .userInitiated) { [weak self] in
             let samples = AudioCaptureService.finalize(take)
             let result = await transcription.transcribe(samples: samples, settings: settingsSnapshot)
             guard let self else { return }   // rebind: a weak `var` capture is a Swift 6 error in a @Sendable closure
-            await MainActor.run { self.finish(result) }
+
+            // Prompting: expand the dictation into a structured coding-agent prompt.
+            // Fails safe — any miss keeps the raw transcription, never lost.
+            var finalResult = result
+            if promptMode, result.success, !result.text.isEmpty {
+                if promptRefiner.isConfigured {
+                    await MainActor.run { self.state.statusText = "Refining prompt…" }
+                    if let refined = await promptRefiner.refine(result.text, primaryModel: settingsSnapshot.promptingModelId),
+                       !refined.isEmpty {
+                        Log.info("Prompt mode: expanded \(result.text.count) → \(refined.count) chars")
+                        finalResult = TranscriptionResult(text: refined, duration: result.duration)
+                    } else {
+                        Log.warning("Prompt refinement returned nothing — using raw transcription")
+                    }
+                } else {
+                    Log.warning("Prompt mode on but no OpenRouter key — skipping refinement")
+                    await MainActor.run {
+                        self.notify("Prompting needs a key",
+                                    "Add your OpenRouter API key in Settings to use Prompting.")
+                    }
+                }
+            }
+            let toFinish = finalResult   // immutable copy for the @Sendable hop
+            await MainActor.run { self.finish(toFinish) }
         }
     }
 

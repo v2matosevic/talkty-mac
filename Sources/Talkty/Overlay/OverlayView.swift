@@ -18,6 +18,7 @@ struct OverlayView: View {
                 .foregroundStyle(state.recordingState == .copied ? Theme.green : Theme.textPrimary)
                 .monospacedDigit()
                 .fixedSize()
+            PromptToggle(state: state)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
@@ -41,6 +42,42 @@ struct OverlayView: View {
         case .cancelled: return "Cancelled"
         default: return state.elapsedDisplay
         }
+    }
+}
+
+/// The "Prompting" toggle: a sparkle glyph in a fixed slot at the right of the pill.
+/// Hidden until you hover the pill (or while active), so plain dictation stays clean.
+/// Tapped, the current take's transcription is expanded into a coding-agent prompt.
+/// Purple = on. Resets each recording.
+private struct PromptToggle: View {
+    @ObservedObject var state: AppState
+
+    /// Only meaningful while a take is in progress (you arm it before stopping).
+    private var togglable: Bool {
+        state.recordingState == .listening || state.recordingState == .transcribing
+    }
+    private var revealed: Bool { togglable && (state.overlayHovering || state.promptingMode) }
+
+    var body: some View {
+        Button {
+            state.promptingMode.toggle()
+        } label: {
+            Image(systemName: "sparkles")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(state.promptingMode ? Theme.purple : Theme.textMuted)
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Prompting — turn this dictation into a structured prompt for a coding AI agent")
+        .opacity(revealed ? 1 : 0)
+        .allowsHitTesting(revealed)
+        // Reserve the 18pt slot for the whole take (so revealing on hover never shifts
+        // the pill under the cursor), but collapse it entirely outside a take so plain
+        // dictation has no empty gap on the right.
+        .frame(width: togglable ? 18 : 0, height: 18)
+        .clipped()
+        .animation(.easeInOut(duration: 0.15), value: revealed)
     }
 }
 

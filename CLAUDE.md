@@ -103,6 +103,34 @@ script and ad-hoc signed (no Apple Developer account needed).
   beta, while the identical path in smoke stayed clean — keep it OFF; see
   REBUILD.md before retrying.
 
+## Cloud transcription + Prompting (OpenRouter) — see docs/PROMPTING.md
+
+- Both opt-in features route through ONE OpenRouter key stored in the **macOS Keychain**
+  (`KeychainService`, service `hr.version2.talkty`) — never in settings.json. Read at point
+  of use; no new `AppSettings` field (so no lenient-decoder migration needed).
+- **Cloud transcription** is just a model: `ModelCatalog` `.cloud` tier, `ModelSpec.isCloud`
+  / `openRouterModelId`. `TranscriptionService.transcribeCloud` posts WAV to
+  `/api/v1/audio/transcriptions`, then runs the SAME `TextPostProcessor` as local. Local
+  whisper.cpp stays the default. **Gotcha:** transcription models are a separate OpenRouter
+  product — they are NOT in `GET /api/v1/models`; discover via
+  `?output_modalities=transcription`. Claude can't transcribe (no ASR endpoint).
+- **Prompting** = hover-revealed ✦ toggle on the recording pill (`PromptToggle` in
+  OverlayView). Per-take, resets each recording. `PromptRefinementService` expands dictation →
+  coding-agent prompt; **fails safe** to the raw transcription on any error. The model is
+  user-selectable in Settings → Prompting (`AppSettings.promptingModelId`, default
+  `minimax/minimax-m3`; lineup in `PromptingModels`); the picked model leads and the rest fall
+  back automatically. The `systemPrompt` is research-grounded (classify-size-first, faithful,
+  hygiene) — see docs/PROMPTING.md before editing it.
+- **Keychain reads prompt the user** for the secret. `KeychainService.hasOpenRouterKey` is an
+  existence-only query (no data → no prompt) for UI gating; only read `openRouterKey` when calling
+  OpenRouter. Settings never preloads the secret into the field (shows a "Saved" pill + Remove
+  instead) so opening Settings never triggers a Keychain dialog.
+- **Overlay now accepts mouse.** `OverlayPanel.ignoresMouseEvents = false` and the content view
+  is a `HoverHostingView` (AppKit tracking area drives `AppState.overlayHovering`;
+  `acceptsFirstMouse` lets the first click land). The panel is still `.nonactivatingPanel` /
+  `canBecomeKey=false`, so clicking the sparkle never steals focus from the user's editor —
+  don't re-enable `ignoresMouseEvents`.
+
 ## Conventions
 
 - TalktyKit is UI-agnostic (Foundation/AVFoundation/CoreGraphics/AppKit-pasteboard

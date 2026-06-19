@@ -31,6 +31,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var customVocabulary: [String]? = nil
     public var textReplacements: [String: String]? = nil
 
+    /// OpenRouter model used by "Prompting" to expand a dictation into a coding-agent
+    /// prompt (the picked one leads; the rest fall back). See `PromptingModels`.
+    public var promptingModelId: String = PromptingModels.defaultId
+
     public var hotkey: HotkeyConfig = .default
     /// Hold-to-talk: record while the hotkey is held, stop on release (vs. toggle).
     public var pushToTalk: Bool = false
@@ -42,7 +46,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         case modelId, selectedMicrophoneId, copyToClipboard, autoPaste, showNotification
         case soundFeedback, language, autoDetectLanguage, launchAtLogin, useGPU
         case duckVolumeWhileRecording, volumeDuckLevel, useCustomVocabulary
-        case customVocabulary, textReplacements, hotkey, pushToTalk, hints
+        case customVocabulary, textReplacements, promptingModelId, hotkey, pushToTalk, hints
     }
 
     /// Lenient decode: any key missing from an older settings.json falls back to its
@@ -67,6 +71,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         useCustomVocabulary = try c.decodeIfPresent(Bool.self, forKey: .useCustomVocabulary) ?? d.useCustomVocabulary
         customVocabulary = try c.decodeIfPresent([String].self, forKey: .customVocabulary) ?? d.customVocabulary
         textReplacements = try c.decodeIfPresent([String: String].self, forKey: .textReplacements) ?? d.textReplacements
+        promptingModelId = try c.decodeIfPresent(String.self, forKey: .promptingModelId) ?? d.promptingModelId
         hotkey = try c.decodeIfPresent(HotkeyConfig.self, forKey: .hotkey) ?? d.hotkey
         pushToTalk = try c.decodeIfPresent(Bool.self, forKey: .pushToTalk) ?? d.pushToTalk
         hints = try c.decodeIfPresent(UserHints.self, forKey: .hints) ?? d.hints

@@ -48,7 +48,7 @@ final class OverlayController {
         let p = OverlayPanel(contentRect: NSRect(origin: .zero, size: panelSize))
         let root = ZStack { OverlayView(state: state) }
             .frame(width: panelSize.width, height: panelSize.height)
-        let hosting = NSHostingView(rootView: root)
+        let hosting = HoverHostingView(rootView: root, state: state)
         hosting.frame = NSRect(origin: .zero, size: panelSize)
         p.contentView = hosting
         panel = p
@@ -70,4 +70,34 @@ final class OverlayController {
             ?? NSScreen.main
             ?? NSScreen.screens[0]
     }
+}
+
+/// Hosting view that reports hover into AppState and accepts the first click without
+/// activating the app. The overlay panel is non-key, so SwiftUI's own `.onHover` is
+/// unreliable here — an AppKit tracking area (`.activeAlways`) is the robust path. The
+/// hover flag reveals the "Prompting" sparkle; `acceptsFirstMouse` lets the very first
+/// click toggle it even though the panel never becomes key.
+private final class HoverHostingView<Content: View>: NSHostingView<Content> {
+    private weak var state: AppState?
+
+    init(rootView: Content, state: AppState) {
+        self.state = state
+        super.init(rootView: rootView)
+    }
+    @available(*, unavailable) required init(rootView: Content) { fatalError() }
+    @available(*, unavailable) required dynamic init?(coder: NSCoder) { fatalError() }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self, userInfo: nil))
+    }
+
+    override func mouseEntered(with event: NSEvent) { state?.overlayHovering = true }
+    override func mouseExited(with event: NSEvent) { state?.overlayHovering = false }
 }

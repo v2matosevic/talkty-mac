@@ -15,6 +15,11 @@ final class DarkWindowController: NSWindowController {
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
         window.backgroundColor = NSColor(Theme.bg)
+        // A programmatically-created NSWindow defaults to isReleasedWhenClosed=true:
+        // closing it deallocates the window while our strong `let` still points at it,
+        // so reopening retains freed memory → EXC_BAD_ACCESS. We own the lifetime via
+        // the controller, so opt out.
+        window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView:
             AnyView(content.frame(width: size.width, height: size.height).background(Theme.bg))
         )
@@ -56,6 +61,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
         window.backgroundColor = NSColor(Theme.bg)
+        // See DarkWindowController: opt out of release-on-close so reopening Settings
+        // doesn't retain a freed NSWindow (EXC_BAD_ACCESS in show()).
+        window.isReleasedWhenClosed = false
         window.center()
 
         let root = SettingsView(vm: vm, models: models,

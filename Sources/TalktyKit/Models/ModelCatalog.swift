@@ -1,12 +1,13 @@
 import Foundation
 
 public enum ModelTier: String, Codable, CaseIterable, Sendable {
-    case fast, balanced, accurate
+    case fast, balanced, accurate, cloud
     public var title: String {
         switch self {
         case .fast: return "Fast"
         case .balanced: return "Balanced"
         case .accurate: return "Accurate"
+        case .cloud: return "Cloud"
         }
     }
     public var subtitle: String {
@@ -14,8 +15,12 @@ public enum ModelTier: String, Codable, CaseIterable, Sendable {
         case .fast: return "Quick notes, lowest latency"
         case .balanced: return "Everyday dictation"
         case .accurate: return "Maximum accuracy"
+        case .cloud: return "Online, highest accuracy — needs an API key"
         }
     }
+    /// Local (on-device whisper.cpp) tiers, excluding the cloud tier. The Settings
+    /// model list renders these in the normal grouped list; cloud gets its own card.
+    public static var localTiers: [ModelTier] { [.fast, .balanced, .accurate] }
 }
 
 /// One downloadable whisper.cpp ggml model. The Mac catalog drops the Windows
@@ -32,9 +37,33 @@ public struct ModelSpec: Identifiable, Equatable, Sendable {
     public let multilingual: Bool
     public let recommended: Bool
     public let detail: String
+    /// OpenRouter model slug for a cloud profile; nil for local whisper.cpp models.
+    /// Its presence is what makes a profile "cloud" — see `isCloud`.
+    public let openRouterModelId: String?
+
+    public init(id: String, displayName: String, fileName: String, url: String,
+                approxBytes: Int64, sizeDisplay: String, tier: ModelTier,
+                multilingual: Bool, recommended: Bool, detail: String,
+                openRouterModelId: String? = nil) {
+        self.id = id
+        self.displayName = displayName
+        self.fileName = fileName
+        self.url = url
+        self.approxBytes = approxBytes
+        self.sizeDisplay = sizeDisplay
+        self.tier = tier
+        self.multilingual = multilingual
+        self.recommended = recommended
+        self.detail = detail
+        self.openRouterModelId = openRouterModelId
+    }
+
+    /// Cloud profiles run against OpenRouter — no local file, download, or GPU.
+    public var isCloud: Bool { openRouterModelId != nil }
 
     public var localURL: URL { AppPaths.modelsDir.appendingPathComponent(fileName) }
     public var isDownloaded: Bool {
+        if isCloud { return true }   // nothing to download — the model lives on OpenRouter
         guard let size = try? FileManager.default.attributesOfItem(atPath: localURL.path)[.size] as? Int64
         else { return false }
         // 95% size threshold mirrors the original's validation (no strict hash).
@@ -71,7 +100,29 @@ public enum ModelCatalog {
                   url: "\(hf)/ggml-large-v3.bin", approxBytes: 3_100_000_000, sizeDisplay: "3.1 GB",
                   tier: .accurate, multilingual: true, recommended: false,
                   detail: "99+ languages. Highest accuracy, slowest."),
+
+        // Cloud (OpenRouter) — opt-in, NOT offline, per-use cost. Local Whisper stays the
+        // default. Slugs verified live against OpenRouter's /audio/transcriptions endpoint
+        // (June 2026); all are multilingual. cloud(...) is a tiny convenience builder.
+        cloud(id: "cloud-gpt4o-transcribe", name: "GPT-4o Transcribe", slug: "openai/gpt-4o-transcribe",
+              recommended: true, detail: "Top accuracy, robust to accents & technical jargon."),
+        cloud(id: "cloud-gpt4o-mini-transcribe", name: "GPT-4o Mini Transcribe", slug: "openai/gpt-4o-mini-transcribe",
+              detail: "Fast and inexpensive, strong everyday quality."),
+        cloud(id: "cloud-whisper-large-v3", name: "Whisper Large V3", slug: "openai/whisper-large-v3",
+              detail: "99+ languages, high accuracy, no local compute."),
+        cloud(id: "cloud-whisper-large-v3-turbo", name: "Whisper Large V3 Turbo", slug: "openai/whisper-large-v3-turbo",
+              detail: "99+ languages, faster variant."),
+        cloud(id: "cloud-qwen3-asr", name: "Qwen3 ASR Flash", slug: "qwen/qwen3-asr-flash-2026-02-10",
+              detail: "Lowest cost per minute, robust in noise."),
     ]
+
+    /// Builds a cloud ModelSpec — no download/file fields apply, so they're stubbed.
+    private static func cloud(id: String, name: String, slug: String,
+                              recommended: Bool = false, detail: String) -> ModelSpec {
+        ModelSpec(id: id, displayName: name, fileName: "", url: "", approxBytes: 0,
+                  sizeDisplay: "Cloud", tier: .cloud, multilingual: true,
+                  recommended: recommended, detail: detail, openRouterModelId: slug)
+    }
 
     public static let defaultModelId = "base.en"
 
@@ -82,4 +133,6 @@ public enum ModelCatalog {
     public static func models(in tier: ModelTier) -> [ModelSpec] {
         all.filter { $0.tier == tier }
     }
+
+    public static var cloudModels: [ModelSpec] { all.filter { $0.isCloud } }
 }

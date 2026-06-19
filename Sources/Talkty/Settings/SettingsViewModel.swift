@@ -27,6 +27,14 @@ final class SettingsViewModel: ObservableObject {
     @Published var vocabularyText: String
     @Published var replacementRows: [ReplacementRow]
 
+    // OpenRouter API key. We do NOT read the stored secret (that would trigger a Keychain
+    // access prompt every time Settings opens) — we only check existence. The field starts
+    // empty; typing a value replaces the stored key on save, leaving it blank keeps the
+    // existing one, and "Remove" clears it. Powers cloud transcription + Prompting.
+    @Published var openRouterKey: String = ""
+    @Published var hasStoredKey: Bool = KeychainService.hasOpenRouterKey
+    private var removeKeyRequested = false
+
     // Auto-paste permission status (refreshed when the app regains focus, e.g. after
     // the user returns from System Settings).
     @Published var accessibilityGranted = PermissionsService.hasAccessibility
@@ -82,10 +90,28 @@ final class SettingsViewModel: ObservableObject {
             dict[row.from] = row.to
         }
         draft.textReplacements = dict
+        // Persist the key BEFORE onApply() (which reloads the model + re-checks the key).
+        // Typed value → replace; "Remove" → clear; left blank → keep the existing key.
+        let typed = openRouterKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !typed.isEmpty {
+            KeychainService.setOpenRouterKey(typed)
+        } else if removeKeyRequested {
+            KeychainService.setOpenRouterKey(nil)
+        }
+        openRouterKey = ""
+        removeKeyRequested = false
+        hasStoredKey = KeychainService.hasOpenRouterKey
         store.replace(draft)
         onApply()
         stopTest()
         stopRecordingHotkey()
+    }
+
+    /// Mark the stored key for removal on the next Save (no Keychain read needed).
+    func removeOpenRouterKey() {
+        removeKeyRequested = true
+        hasStoredKey = false
+        openRouterKey = ""
     }
 
     func cancel() {
