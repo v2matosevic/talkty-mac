@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Windows version (Talkty)
+    url: https://github.com/v2matosevic/Talkty
+    about: Using Windows? The native build lives in its own repo.
+  - name: Website
+    url: https://version2.hr
+    about: Made by Version2.

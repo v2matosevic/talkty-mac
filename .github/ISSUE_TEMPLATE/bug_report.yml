@@ -1,0 +1,59 @@
+name: Bug report
+description: Something is broken or behaving unexpectedly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to file this. The more detail, the faster it gets fixed.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, and what went wrong?
+      placeholder: I pressed the hotkey in Terminal, spoke, and nothing was typed.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Talkty version
+      placeholder: 1.4.0
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: Mac and macOS version
+      placeholder: M2 Pro, macOS 14.5
+    validations:
+      required: false
+  - type: dropdown
+    id: model
+    attributes:
+      label: Which model
+      options:
+        - tiny.en / base.en
+        - small.en
+        - large-v3-turbo
+        - medium.en
+        - large-v3
+        - A cloud model
+        - Not sure
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Logs live in `~/Library/Application Support/Talkty/Logs/`. Attach the latest if you can.
+        For more detail, enable debug logging: `defaults write hr.version2.talkty debugLogging -bool YES` (then relaunch).
+        Please remove anything private first.
+    validations:
+      required: false
