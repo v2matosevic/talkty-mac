@@ -2,6 +2,22 @@
 
 User-facing changes, newest first.
 
+## [Unreleased]
+
+- Auto-paste now pastes (clipboard + Cmd+V) instead of typing the text as key
+  events. Typing doubled every 20th character in xterm.js terminals such as
+  Hephaestus ("TTake a look at the appplication"); paste goes through each app's
+  normal paste path, and line breaks in Prompting output survive. With
+  copy-to-clipboard off, your previous clipboard is put back after the paste.
+  The old behaviour is still available: `defaults write hr.version2.talkty
+  autoPasteMethod -string type`.
+- The vocabulary prompt was longer than whisper accepts, so whisper silently dropped
+  the context sentences and kept a bare term list. It is now trimmed to fit.
+- Experiment: `defaults write hr.version2.talkty beamSearch -bool YES` decodes with
+  5 beams instead of greedy, about 0.1 to 0.2 s slower per take on an M5.
+- Building on a machine with only Command Line Tools works again on the macOS 27
+  SDK (the build falls back to the 26.x SDK for the SwiftUI macro plugin).
+
 ## [1.4.0] - 2026-06-19
 
 - Cloud transcription via OpenRouter (opt-in): GPT-4o Transcribe, Whisper Large V3,
