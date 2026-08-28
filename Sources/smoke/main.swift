@@ -60,24 +60,36 @@ print("model loaded in \(String(format: "%.2f", -tLoad.timeIntervalSinceNow))s")
 //   TALKTY_RUNS=<n>       timed runs after one untimed warm pass (Metal compile)
 //   TALKTY_WARM_CTX=<n>   audio_ctx for the warm pass (default: same as timed) —
 //                         lets the bench replicate the app's warmup(full) → take(shrunk)
-//   TALKTY_VOCAB=1        pass the app's default vocabulary initial_prompt
+//   TALKTY_VOCAB=1        pass the app's default vocabulary initial_prompt (trimmed to
+//                         whisper's prompt budget exactly as the app does)
+//   TALKTY_VOCAB=raw      the untrimmed 80-term prompt (what shipped before 1.4.1)
+//   TALKTY_BEAM=<n>       beam search with n beams (default 1 = greedy, the app default)
 let audioCtx = Int32(ProcessInfo.processInfo.environment["TALKTY_AUDIO_CTX"] ?? "") ?? 0
+let beamSize = Int32(ProcessInfo.processInfo.environment["TALKTY_BEAM"] ?? "") ?? 1
 let runs = Int(ProcessInfo.processInfo.environment["TALKTY_RUNS"] ?? "") ?? 1
 let warmCtx = Int32(ProcessInfo.processInfo.environment["TALKTY_WARM_CTX"] ?? "") ?? audioCtx
-let prompt: String? = ProcessInfo.processInfo.environment["TALKTY_VOCAB"] == "1"
-    ? DefaultVocabulary.promptContext + " Terminology: "
-        + DefaultVocabulary.codingTerms.prefix(80).joined(separator: ", ") + "."
-    : nil
+let vocabMode = ProcessInfo.processInfo.environment["TALKTY_VOCAB"] ?? ""
+var prompt: String? = nil
+if vocabMode == "raw" {
+    prompt = TranscriptionService.assemblePrompt(terms: Array(DefaultVocabulary.codingTerms.prefix(80)))
+} else if vocabMode == "1" {
+    // Same trimming the app applies (needs the loaded engine to tokenize).
+    let service = TranscriptionService()
+    try service.engine.load(modelPath: modelPath, useGPU: true)
+    prompt = service.buildPrompt(AppSettings())
+    service.unload()
+}
 if audioCtx > 0 { print("audio_ctx override: \(audioCtx)") }
+if beamSize > 1 { print("beam search: \(beamSize) beams") }
 if runs > 1, warmCtx != audioCtx { print("warm pass audio_ctx: \(warmCtx)") }
-if prompt != nil { print("vocab initial_prompt: on (app default)") }
+if let prompt { print("vocab initial_prompt: \(vocabMode == "raw" ? "raw" : "app-trimmed") — \(engine.tokenCount(prompt)) tokens (budget \(WhisperEngine.maxPromptTokens))") }
 
 var text = ""
-if runs > 1 { _ = try engine.transcribeSegments(samples: samples, language: language, initialPrompt: prompt, audioCtx: warmCtx) }
+if runs > 1 { _ = try engine.transcribeSegments(samples: samples, language: language, initialPrompt: prompt, audioCtx: warmCtx, beamSize: beamSize) }
 var times: [Double] = []
 for _ in 0..<runs {
     let tRun = Date()
-    let segments = try engine.transcribeSegments(samples: samples, language: language, initialPrompt: prompt, audioCtx: audioCtx)
+    let segments = try engine.transcribeSegments(samples: samples, language: language, initialPrompt: prompt, audioCtx: audioCtx, beamSize: beamSize)
     times.append(-tRun.timeIntervalSinceNow)
     text = segments.joined().trimmingCharacters(in: .whitespacesAndNewlines)
 }

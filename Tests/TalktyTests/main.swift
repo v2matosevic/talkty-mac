@@ -12,6 +12,20 @@ func eq<T: Equatable>(_ a: T, _ b: T, _ name: String) {
     check(a == b, name, "got \(a), expected \(b)")
 }
 
+// MARK: ClipboardService snapshot/restore (all pasteboard types survive a round-trip)
+do {
+    let cb = ClipboardService()
+    cb.setText("CLIPBOARD-MARKER")
+    let snap = cb.snapshotItems()
+    check(!snap.isEmpty, "clipboard snapshot captures items")
+    cb.setText("transient paste text")
+    eq(cb.getText(), "transient paste text", "clipboard overwritten for paste")
+    cb.restore(items: snap)
+    eq(cb.getText(), "CLIPBOARD-MARKER", "clipboard restored from snapshot")
+    cb.restore(items: [])
+    eq(cb.getText(), nil, "empty snapshot restores to empty")
+}
+
 // MARK: TextPostProcessor
 eq(TextPostProcessor.joinSegments(["I want to build.", "a new feature"]),
    "I want to build a new feature", "false-break merge")

@@ -86,16 +86,22 @@ public final class WhisperEngine {
     /// `audioCtx` > 0 shrinks the encoder's attention window from the full 30 s
     /// (1500 positions) to fit the clip — whisper's [EXPERIMENTAL] speed-up knob.
     /// 0 = whisper default (full window).
+    /// `beamSize` > 1 switches the decoder from greedy to beam search (whisper-cli's
+    /// default is 5): the beams decode as one batch, so on Metal it costs a fraction
+    /// of a second, and it is the standard accuracy lever for short or mumbled clips
+    /// where greedy commits to the first plausible token. 1 = greedy (the original).
     public func transcribeSegments(samples: [Float],
                                    language: String = "en",
                                    initialPrompt: String? = nil,
                                    threads: Int32 = WhisperEngine.defaultThreads,
-                                   audioCtx: Int32 = 0) throws -> [String] {
+                                   audioCtx: Int32 = 0,
+                                   beamSize: Int32 = 1) throws -> [String] {
         lock.lock(); defer { lock.unlock() }
         guard let ctx else { throw EngineError.notLoaded }
         abortFlag.pointee = false   // fresh run; a stale abort must not kill it
 
-        var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
+        let strategy = beamSize > 1 ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY
+        var params = whisper_full_default_params(strategy)
         params.print_realtime = false
         params.print_progress = false
         params.print_timestamps = false
@@ -111,6 +117,10 @@ public final class WhisperEngine {
         params.temperature_inc = 0
         params.n_threads = threads
         params.greedy.best_of = 1
+        if beamSize > 1 {
+            params.beam_search.beam_size = beamSize
+            params.beam_search.patience = -1
+        }
         if audioCtx > 0 { params.audio_ctx = audioCtx }
 
         // Hold C strings alive across the whisper_full call.
@@ -147,6 +157,20 @@ public final class WhisperEngine {
         }
         return segments
     }
+
+    /// Number of decoder tokens `text` occupies as an initial prompt. whisper keeps
+    /// only the LAST `n_text_ctx/2 - 1` (= 223 for every whisper model) prompt tokens,
+    /// so an over-long prompt loses its head, not its tail.
+    public func tokenCount(_ text: String) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        guard let ctx else { return 0 }
+        var buf = [whisper_token](repeating: 0, count: 2048)
+        let n = whisper_tokenize(ctx, text, &buf, Int32(buf.count))
+        return n < 0 ? -Int(n) : Int(n)   // negative = "needed this many", still the count
+    }
+
+    /// The prompt budget whisper actually honours (see `tokenCount`).
+    public static let maxPromptTokens = 223
 
     /// Convenience: transcribe and join segments (used by the smoke test).
     public func transcribe(samples: [Float], language: String = "en") throws -> String {

@@ -54,14 +54,17 @@ public final class TranscriptionService: @unchecked Sendable {   // engine is NS
             : [:]
 
         let audioCtx = Self.experimentalAudioCtx(sampleCount: samples.count)
+        let beamSize = Self.beamSize
         let t0 = Date()
         do {
             let segments = try engine.transcribeSegments(samples: samples, language: language,
-                                                         initialPrompt: prompt, audioCtx: audioCtx)
+                                                         initialPrompt: prompt, audioCtx: audioCtx,
+                                                         beamSize: beamSize)
             let text = TextPostProcessor.process(segments: segments, replacements: replacements)
             let dur = -t0.timeIntervalSinceNow
             let rtf = dur / max(Double(samples.count) / Constants.sampleRate, 0.001)
-            Log.info("Transcribed \(samples.count) samples in \(String(format: "%.2f", dur))s (RTF \(String(format: "%.2f", rtf)))")
+            Log.info("Transcribed \(samples.count) samples in \(String(format: "%.2f", dur))s (RTF \(String(format: "%.2f", rtf)))"
+                + (beamSize > 1 ? " beam=\(beamSize)" : ""))
             return TranscriptionResult(text: text, duration: dur)
         } catch {
             Log.error("Transcription failed: \(error)")
@@ -131,11 +134,45 @@ public final class TranscriptionService: @unchecked Sendable {   // engine is NS
         return ctx
     }
 
-    private func buildPrompt(_ settings: AppSettings) -> String? {
+    /// [A/B] Beam search (5 beams) instead of greedy decoding. Read per take, no relaunch:
+    ///   defaults write hr.version2.talkty beamSearch -bool YES
+    /// Look for "beam=5" on the Transcribed log line.
+    static var beamSize: Int32 {
+        UserDefaults.standard.bool(forKey: "beamSearch") ? 5 : 1
+    }
+
+    /// Natural-sentence context plus a term list, trimmed so the whole prompt fits the
+    /// budget whisper honours. Over budget, whisper silently drops the HEAD of the prompt,
+    /// i.e. the context sentences, and keeps a bare comma list — the default 80-term
+    /// list was ~100 tokens over. Terms are dropped from the end until it fits.
+    public func buildPrompt(_ settings: AppSettings) -> String? {
         guard settings.useCustomVocabulary else { return nil }
         let terms = settings.customVocabulary ?? DefaultVocabulary.codingTerms
         if terms.isEmpty { return DefaultVocabulary.promptContext }
-        // Tuned natural-sentence context plus a short term list (kept under ~200 tokens).
-        return DefaultVocabulary.promptContext + " Terminology: " + terms.prefix(80).joined(separator: ", ") + "."
+        var kept = Array(terms.prefix(80))
+        var prompt = Self.assemblePrompt(terms: kept)
+        var tokens = engine.tokenCount(prompt)
+        // Binary-search the cut, then step back; tokenize is microseconds so this is cheap.
+        if tokens > WhisperEngine.maxPromptTokens {
+            var lo = 0, hi = kept.count
+            while lo < hi {
+                let mid = (lo + hi + 1) / 2
+                if engine.tokenCount(Self.assemblePrompt(terms: Array(kept.prefix(mid)))) <= WhisperEngine.maxPromptTokens {
+                    lo = mid
+                } else {
+                    hi = mid - 1
+                }
+            }
+            kept = Array(kept.prefix(lo))
+            prompt = Self.assemblePrompt(terms: kept)
+            tokens = engine.tokenCount(prompt)
+            Log.debug("Vocabulary prompt trimmed to \(kept.count)/\(terms.count) terms (\(tokens) tokens)")
+        }
+        return prompt
+    }
+
+    public static func assemblePrompt(terms: [String]) -> String {
+        if terms.isEmpty { return DefaultVocabulary.promptContext }
+        return DefaultVocabulary.promptContext + " Terminology: " + terms.joined(separator: ", ") + "."
     }
 }

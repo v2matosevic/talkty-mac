@@ -34,4 +34,28 @@ public final class ClipboardService {
         pasteboard.clearContents()
         pasteboard.setString(snapshot, forType: .string)
     }
+
+    /// Copy every item on the pasteboard, all types (text, rich text, images, file
+    /// URLs…), into detached items that survive a `clearContents()`. Promised data
+    /// that can't be materialized is skipped. Empty array = the clipboard was empty.
+    public func snapshotItems() -> [NSPasteboardItem] {
+        (pasteboard.pasteboardItems ?? []).compactMap { item in
+            let copy = NSPasteboardItem()
+            var any = false
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    copy.setData(data, forType: type)
+                    any = true
+                }
+            }
+            return any ? copy : nil
+        }
+    }
+
+    /// Put a `snapshotItems()` result back. An empty snapshot clears the clipboard,
+    /// which is what "restore to empty" means.
+    public func restore(items: [NSPasteboardItem]) {
+        pasteboard.clearContents()
+        if !items.isEmpty { pasteboard.writeObjects(items) }
+    }
 }

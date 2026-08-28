@@ -238,7 +238,7 @@ final class DictationController {
             // Continuous dictation: separate this take from the previous one. Only the
             // typed text gets the space — the clipboard keeps the clean transcription.
             let pasteText = continuesPreviousTake ? " " + text : text
-            switch autoPaste.typeText(pasteText) {
+            switch autoPaste.insert(pasteText, keepOnClipboard: s.copyToClipboard ? text : nil) {
             case .pasted:
                 lastPasteAt = Date()
                 Log.info("Auto-paste: inserted \(pasteText.count) chars at cursor"

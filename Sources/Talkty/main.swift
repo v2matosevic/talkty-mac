@@ -28,13 +28,18 @@ MainActor.assumeIsolated {
     }
 
     // Auto-paste mechanism test: `Talkty --type-text "hello" [delaySeconds]`. After
-    // `delay`, types the text at the cursor (focus a target first). Needs Accessibility.
+    // `delay`, inserts the text at the cursor (focus a target first) using the same
+    // method the app uses (`autoPasteMethod` defaults key). Needs Accessibility.
     if let i = CommandLine.arguments.firstIndex(of: "--type-text") {
         NSApplication.shared.setActivationPolicy(.prohibited)
         let text = CommandLine.arguments.count > i + 1 ? CommandLine.arguments[i + 1] : "Talkty test 123"
         let delay = CommandLine.arguments.count > i + 2 ? (Double(CommandLine.arguments[i + 2]) ?? 0) : 0
         if delay > 0 { Thread.sleep(forTimeInterval: delay) }
-        print("type-text: \(AutoPasteService().typeText(text))")
+        let service = AutoPasteService()   // must outlive the settle timer that restores the clipboard
+        print("type-text (\(AutoPasteService.method.rawValue)): \(service.insert(text, keepOnClipboard: nil))")
+        // The clipboard restore is queued on the main queue. `run(until:)` returns at once
+        // when the loop has no sources, so attach a timer to keep it spinning long enough.
+        RunLoop.main.run(until: Date().addingTimeInterval(AutoPasteService.pasteSettleDelay + 0.3))
         exit(0)
     }
 

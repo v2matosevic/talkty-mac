@@ -50,6 +50,13 @@ swift build                          # build everything
 open `Package.swift` in it to edit; the runnable `.app` is assembled by a
 script and ad-hoc signed (no Apple Developer account needed).
 
+**SDK gotcha (CLT-only machines, since the macOS 27 SDK):** SwiftUI's `@State` is
+now a compiler macro (`SwiftUIMacros`) that only Xcode ships, so `swift build` of the
+app target fails with "plugin for module 'SwiftUIMacros' not found". `make_app.sh`
+auto-falls back to the newest 26.x SDK in the CLT; for a plain `swift build` set
+`SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk`. TalktyKit, smoke
+and the tests build fine either way.
+
 ## Hard-won gotchas
 
 - **Teardown abort.** ggml-metal's global device is freed by a C++ static
@@ -91,13 +98,33 @@ script and ad-hoc signed (no Apple Developer account needed).
   breaks) → CleanupPunctuation → ApplyReplacements (vocabulary) →
   StripHallucinations (`Thanks/Bye/Subscribe/[MUSIC]/`, 3+ ellipsis, trailing
   "you").
+- Whisper prompt budget: whisper keeps only the LAST 223 initial-prompt tokens
+  (`n_text_ctx/2 - 1`), so an over-long prompt loses its head. The default 80-term
+  vocabulary prompt was 367 tokens: the context sentences were silently dropped and the
+  decoder saw a bare comma list. `TranscriptionService.buildPrompt` now trims terms until
+  the whole prompt fits (`WhisperEngine.tokenCount` / `maxPromptTokens`). Check with
+  `TALKTY_VOCAB=1` vs `TALKTY_VOCAB=raw` on smoke.
+- Auto-paste = clipboard + synthesized ⌘V (`AutoPasteService`, method `paste`). It was
+  keystroke injection in 20-char Unicode chunks until 1.4.1: WebKit/Chromium hosts fire a
+  `keypress` for the first char of a multi-char key event AND an `insertText` for the
+  whole string, so xterm.js terminals (Hephaestus) doubled every 20th character
+  ("TTake a look at the appplication"). ⌘V goes through the host's normal paste path
+  (bracketed paste, Hephaestus's single paste funnel + dedupe). Continuation takes paste
+  `" " + text`, then the clipboard is rewritten to the clean text after
+  `pasteSettleDelay`; with copy-to-clipboard off the previous pasteboard items are
+  restored instead. `autoPasteMethod=type` (defaults) is the per-character keystroke
+  fallback, newlines flattened. Test either path: `Talkty --type-text "hi" 3`.
 - Hotkey default Alt+Q (configurable); ESC cancels during recording.
 - Storage: `~/Library/Application Support/Talkty/` (settings.json, history.json,
   Logs/, Models/). History capped at 50.
 - Runtime flags (`defaults write hr.version2.talkty <key> -bool YES`):
   `debugLogging` — DEBUG log lines in release builds (gated by default; needs
   relaunch). `disableAutoGain` — kill switch for the take auto-gain (read
-  per-take). `experimentalAudioCtx` — size the encoder window to the clip
+  per-take). `beamSearch` — 5-beam decoding instead of greedy (read per-take; the
+  Transcribed log line shows `beam=5`; ~+0.1–0.2 s per take on M5, the standard
+  accuracy lever for short/mumbled clips — A/B pending on real takes).
+  `autoPasteMethod` (string `paste`|`type`, read per insert) — see auto-paste note
+  above. `experimentalAudioCtx` — size the encoder window to the clip
   (read per-take). **Failed real-take validation 2026-06-11**: in-app takes
   over ~4 s (ctx > the 256 floor) came out as repetition garbage on macOS 27
   beta, while the identical path in smoke stayed clean — keep it OFF; see

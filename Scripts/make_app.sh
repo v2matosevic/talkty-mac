@@ -18,6 +18,19 @@ VERSION="$(/usr/bin/plutil -extract version raw version.json 2>/dev/null || echo
 APP="dist/Talkty.app"
 BUNDLE_ID="hr.version2.talkty"
 
+# The macOS 27 SDK's SwiftUI is backed by the SwiftUIMacros compiler plugin, which
+# Command Line Tools don't ship (Xcode does) — `@State` fails to compile against it.
+# Without the plugin, build against the newest 26.x SDK the CLT still carries.
+# An explicit SDKROOT always wins.
+DEV="$(xcode-select -p)"
+if [ -z "${SDKROOT:-}" ] && ! ls "$DEV"/usr/lib/swift/host/plugins/libSwiftUIMacros.dylib >/dev/null 2>&1; then
+    FALLBACK_SDK="$(ls -d "$DEV"/SDKs/MacOSX26.*.sdk 2>/dev/null | sort -V | tail -1 || true)"
+    if [ -n "$FALLBACK_SDK" ]; then
+        export SDKROOT="$FALLBACK_SDK"
+        echo "==> No SwiftUIMacros plugin in this toolchain — building against $(basename "$SDKROOT")"
+    fi
+fi
+
 echo "==> Building ($CONFIG)…"
 swift build -c "$CONFIG" --product Talkty >/dev/null
 

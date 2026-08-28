@@ -221,6 +221,34 @@ Round two of the optimization sweep — robustness and the long tail:
   input slider — hardware-level, system-wide — and applies immediately (not part
   of the draft/save cycle).
 
+## 1.4.1 — paste + accuracy groundwork (2026-08-28)
+
+- **Auto-paste is ⌘V again.** Keystroke injection posted the text as 20-char Unicode
+  key events. WebKit/Chromium hosts fire a `keypress` for the FIRST character of such
+  an event and an `insertText` for the whole string; xterm.js terminals (Hephaestus,
+  Marko's Tauri ADE) delivered both, so every 20th character came out doubled
+  ("TTake a look at the appplication we have buuilt"). The transcript in the log was
+  clean — the damage was purely on insert. Now: text → clipboard → synthesized ⌘V,
+  which every host handles through its normal paste path (bracketed paste; Hephaestus's
+  single paste funnel + dedupe guard). Continuation takes paste `" " + text` and the
+  clipboard is rewritten to the clean transcription after 0.5 s; with copy-to-clipboard
+  off, the previous pasteboard items (all types) are restored instead. Newlines survive
+  in paste mode (Prompting output stays structured). Per-character keystroke typing
+  remains as `defaults write hr.version2.talkty autoPasteMethod -string type`.
+- **Vocabulary prompt was over budget.** whisper keeps only the last 223 initial-prompt
+  tokens; the default prompt (context paragraph + 80 terms) was 367, so the paragraph
+  and ~35 terms were silently dropped and the decoder saw a bare comma list.
+  `buildPrompt` now tokenizes with the loaded model and trims terms from the end until
+  the whole prompt fits (220 tokens with the defaults). smoke: `TALKTY_VOCAB=1` (trimmed,
+  as the app) vs `TALKTY_VOCAB=raw`.
+- **Beam search A/B flag.** `defaults write hr.version2.talkty beamSearch -bool YES`
+  (per take) decodes with 5 beams instead of greedy. smoke bench on large-v3-turbo,
+  M5, median of 3: 3.5 s clip 1.64 s → 1.76 s, 20 s clip 2.02 s → 2.21 s. Greedy stays
+  the default until real short takes show it earns the ~0.1–0.2 s.
+- **Build on CLT-only machines.** The macOS 27 SDK's SwiftUI needs the SwiftUIMacros
+  plugin that only Xcode ships; `make_app.sh` falls back to the newest 26.x SDK
+  automatically (`SDKROOT` still wins).
+
 ## Known limitations / next steps
 
 - **Notarization** needs an Apple Developer account ($99/yr). The release workflow
