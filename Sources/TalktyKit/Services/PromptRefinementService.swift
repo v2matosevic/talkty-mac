@@ -6,8 +6,13 @@ import Foundation
 ///
 /// Uses a model FALLBACK CHAIN: the primary is tried first; on any failure
 /// (unavailable, rate-limited, timeout, HTTP error, empty) it falls to the next.
-/// If all fail, the caller keeps the raw (cleaned) transcription — Prompting never
+/// If all fail, the caller keeps the raw (cleaned) transcription; Prompting never
 /// loses your dictation.
+///
+/// A COMPLETENESS GUARD treats a suspiciously short result (a model that summarized
+/// instead of reformatting) as a failure and escalates to the next model. Key-level
+/// failures (401 invalid key, 402 out of credits) abort the whole chain at once: every
+/// model would fail the same way, and the caller surfaces `lastError` to the user.
 ///
 /// See docs/PROMPTING.md for the design rationale and system-prompt notes.
 public final class PromptRefinementService: @unchecked Sendable {
@@ -100,6 +105,12 @@ public final class PromptRefinementService: @unchecked Sendable {
     /// Whether a key is available (so the overlay/pipeline can decide to attempt refinement).
     public var isConfigured: Bool { KeychainService.hasOpenRouterKey }
 
+    /// Why the last `refine` returned nil, in user-facing words (nil after success or ESC).
+    public private(set) var lastError: String?
+
+    /// A per-model attempt outcome. `fatal` is a key-level failure that ends the chain.
+    private enum Attempt { case ok(String), failed, fatal(String) }
+
     /// Refine a transcription into a coding-agent prompt. `primaryModel` is the
     /// user-selected model (Settings → Prompting); it leads the chain and the other
     /// catalog models follow as automatic fallbacks. Returns nil on any failure (no
@@ -114,34 +125,67 @@ public final class PromptRefinementService: @unchecked Sendable {
         let input = transcription.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !input.isEmpty else { return nil }
 
+        lastError = nil
         let chain = PromptingModels.chain(primary: primaryModel)
         for (i, model) in chain.enumerated() {
             if Task.isCancelled {
                 Log.info("PromptRefinement cancelled (ESC)")
                 return nil
             }
-            if let content = await tryModel(model, key: key, input: input), !content.isEmpty {
+            let isLast = i == chain.count - 1
+            switch await tryModel(model, key: key, input: input) {
+            case .fatal(let reason):
+                Log.error("Refinement aborted: \(reason)")
+                lastError = reason
+                return nil
+            case .ok(let content):
+                let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                // A far-shorter-than-input result summarized and dropped detail. Escalate,
+                // unless this is the last model: a structured-but-short prompt still beats
+                // raw dictation there.
+                if !isLast, Self.isSuspectedSummary(input: input, output: trimmed) {
+                    Log.warning("Refinement model '\(model)' summarized (\(input.count) → \(trimmed.count) chars, under \(Int(Constants.promptCompletenessMinOutputRatio * 100))% of input), escalating to '\(chain[i + 1])'")
+                    continue
+                }
                 if i > 0 { Log.info("Prompt refined via fallback model #\(i + 1) (\(model))") }
-                return content.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed
+            case .failed:
+                break
             }
-            let next = i < chain.count - 1 ? "falling back to '\(chain[i + 1])'" : "no more fallbacks"
-            Log.warning("Refinement model '\(model)' failed/empty — \(next)")
+            if Task.isCancelled { return nil }
+            let next = isLast ? "no more fallbacks" : "falling back to '\(chain[i + 1])'"
+            Log.warning("Refinement model '\(model)' failed/empty, \(next)")
         }
-        Log.error("All refinement models failed — caller falls back to raw transcription")
+        Log.error("All refinement models failed; caller falls back to raw transcription")
+        lastError = "Prompting failed (all models unavailable)"
         return nil
     }
 
-    /// Single attempt against one model. Returns the content, or nil on any failure so
-    /// the chain can advance to the next model.
-    private func tryModel(_ model: String, key: String, input: String) async -> String? {
+    /// True when a refinement looks like a SUMMARY rather than a reformat: the input was
+    /// substantial (so the prompt was expected to grow) yet the output came back well
+    /// under the input length. Pure length heuristic, tuned from real logs on Windows.
+    /// Short inputs are exempt: they legitimately produce short prompts.
+    static func isSuspectedSummary(input: String, output: String) -> Bool {
+        guard input.count >= Constants.promptCompletenessMinInputChars else { return false }
+        return Double(output.trimmingCharacters(in: .whitespacesAndNewlines).count)
+            < Double(input.count) * Constants.promptCompletenessMinOutputRatio
+    }
+
+    /// Single attempt against one model. `.failed` lets the chain advance; `.fatal` ends it.
+    private func tryModel(_ model: String, key: String, input: String) async -> Attempt {
         let payload: [String: Any] = [
             "model": model,
             "messages": [
                 ["role": "system", "content": Self.systemPrompt],
                 ["role": "user", "content": input],
             ],
-            // Low temperature — faithful, near-deterministic rewrite, not creativity.
-            "temperature": 0.3,
+            // Low temperature: faithful, near-deterministic rewrite, not creativity.
+            "temperature": 0.2,
+            // Headroom so a long, detail-complete prompt is never cut by a provider's
+            // default output cap. A ceiling, not a target: it adds no latency.
+            "max_tokens": 8192,
+            // Route multi-hosted models (MiniMax) to their fastest provider. No-op for the rest.
+            "provider": ["sort": "throughput"],
         ]
         var request = URLRequest(url: Self.endpoint)
         request.httpMethod = "POST"
@@ -149,40 +193,52 @@ public final class PromptRefinementService: @unchecked Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(Constants.repoURL, forHTTPHeaderField: "HTTP-Referer")
         request.setValue("Talkty", forHTTPHeaderField: "X-Title")
-        guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return nil }
+        guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return .failed }
         request.httpBody = body
 
         let t0 = Date()
         do {
             let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else { return nil }
+            guard let http = response as? HTTPURLResponse else { return .failed }
             guard (200..<300).contains(http.statusCode) else {
                 Log.warning("Refinement '\(model)' HTTP \(http.statusCode): \(preview(data))")
-                return nil
+                switch http.statusCode {
+                case 401: return .fatal("Prompting failed: invalid OpenRouter API key.")
+                case 402: return .fatal("Prompting failed: OpenRouter credits exhausted.")
+                default: return .failed
+                }
             }
-            guard let content = Self.extractContent(data), !content.isEmpty else {
+            let (content, finishReason) = Self.extractContent(data)
+            guard let content, !content.isEmpty else {
                 Log.warning("Refinement '\(model)' returned empty content")
-                return nil
+                return .failed
+            }
+            // "length" means the provider cut the prompt mid-sentence at max_tokens. An
+            // incomplete prompt silently violates "lose nothing": escalate instead.
+            if finishReason?.lowercased() == "length" {
+                Log.warning("Refinement '\(model)' hit max_tokens (finish_reason=length, \(content.count) chars), treating as failure")
+                return .failed
             }
             Log.info("Refinement '\(model)' ok in \(String(format: "%.2f", -t0.timeIntervalSinceNow))s: \(input.count) → \(content.count) chars")
-            return content
+            return .ok(content)
         } catch is CancellationError {
-            return nil
+            return .failed
         } catch let urlError as URLError where urlError.code == .cancelled {
-            return nil
+            return .failed
         } catch {
             Log.warning("Refinement '\(model)' failed: \(error.localizedDescription)")
-            return nil
+            return .failed
         }
     }
 
-    /// Pulls the assistant message out of an OpenAI/OpenRouter chat-completions response.
-    private static func extractContent(_ data: Data) -> String? {
+    /// Pulls the assistant message and finish_reason out of an OpenAI/OpenRouter
+    /// chat-completions response.
+    private static func extractContent(_ data: Data) -> (content: String?, finishReason: String?) {
         guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = obj["choices"] as? [[String: Any]],
-              let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String else { return nil }
-        return content
+              let choice = choices.first else { return (nil, nil) }
+        let message = choice["message"] as? [String: Any]
+        return (message?["content"] as? String, choice["finish_reason"] as? String)
     }
 
     private func preview(_ data: Data) -> String {

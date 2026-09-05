@@ -18,7 +18,7 @@ import Carbon.HIToolbox
 ///   20-char chunks came out with every 20th character doubled in xterm.js-based
 ///   terminals ("TTake a look at the appplication…"). Kept as an escape hatch only.
 ///   `defaults write hr.version2.talkty autoPasteMethod -string type`
-public final class AutoPasteService {
+public final class AutoPasteService: @unchecked Sendable {   // main-thread confined (pendingRestore)
     /// Outcome of an insert attempt, so the caller can react (notify / fall back to clipboard).
     public enum Result: Equatable { case pasted, needsPermission, failed }
 
@@ -78,7 +78,7 @@ public final class AutoPasteService {
     private func pasteText(_ text: String, keepOnClipboard: String?) -> Result {
         flushPendingRestore()
         // Snapshot BEFORE we write, and only when we're expected to give the clipboard back.
-        let snapshot: [NSPasteboardItem]? = keepOnClipboard == nil ? clipboard.snapshotItems() : nil
+        let snapshot: PasteboardSnapshot? = keepOnClipboard == nil ? PasteboardSnapshot(clipboard.snapshotItems()) : nil
         guard clipboard.setText(text) else {
             Log.error("Auto-paste: couldn't write the pasteboard")
             return .failed
@@ -93,15 +93,21 @@ public final class AutoPasteService {
         // Give the target time to read, then leave the clipboard the way the caller wants it.
         // A run-loop timer (common modes), not GCD: it fires in the app's main loop, during
         // menu tracking, and in the `--type-text` CLI hook's `RunLoop.run(until:)`.
-        let restore: () -> Void = { [weak self] in
+        let restore: @Sendable () -> Void = { [weak self] in
             guard let self else { return }
             self.pendingRestore = nil
+            // Only touch the clipboard if it still holds OUR paste text. If the user (or
+            // anything else) copied something newer in the meantime, leave it alone.
+            guard self.clipboard.getText() == text else {
+                Log.debug("Auto-paste: clipboard changed since paste, leaving it")
+                return
+            }
             if let keep = keepOnClipboard {
                 if keep != text { self.clipboard.setText(keep) }
                 Log.debug("Auto-paste: clipboard now holds the clean transcription")
             } else if let snapshot {
-                self.clipboard.restore(items: snapshot)
-                Log.debug("Auto-paste: clipboard restored (\(snapshot.count) item(s))")
+                self.clipboard.restore(items: snapshot.items)
+                Log.debug("Auto-paste: clipboard restored (\(snapshot.items.count) item(s))")
             }
         }
         let timer = Timer(timeInterval: Self.pasteSettleDelay, repeats: false) { _ in restore() }
@@ -109,6 +115,13 @@ public final class AutoPasteService {
         RunLoop.main.add(timer, forMode: .common)
         Log.debug("Auto-paste: pasted \(text.count) chars via ⌘V")
         return .pasted
+    }
+
+    /// Detached pasteboard items, boxed so the restore closure can carry them across the
+    /// run-loop timer hop (NSPasteboardItem isn't Sendable; the items are ours alone).
+    private final class PasteboardSnapshot: @unchecked Sendable {
+        let items: [NSPasteboardItem]
+        init(_ items: [NSPasteboardItem]) { self.items = items }
     }
 
     /// A restore queued by the previous paste hasn't fired yet (two takes back-to-back):

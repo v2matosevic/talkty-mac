@@ -10,6 +10,15 @@ public struct RawTake: Sendable {
     public let samples: [Float]
     public let sampleRate: Double
     public var isEmpty: Bool { samples.isEmpty }
+
+    /// Every sample is exactly zero: a muted or disconnected input, not a quiet room.
+    /// Quiet nonzero audio is real and goes to whisper; this is not a voice detector.
+    public var isDigitalSilence: Bool {
+        guard !samples.isEmpty else { return false }
+        var peak: Float = 0
+        samples.withUnsafeBufferPointer { vDSP_maxmgv($0.baseAddress!, 1, &peak, vDSP_Length($0.count)) }
+        return peak == 0
+    }
 }
 
 /// Microphone capture via AVAudioEngine. Captures at the hardware rate, downmixes
@@ -28,6 +37,10 @@ public final class AudioCaptureService: @unchecked Sendable {
     private var hwSamples: [Float] = []     // mono @ hardware rate
     private var hwSampleRate: Double = 48000
     private var scratch: [Float] = []       // reused downmix buffer (tap thread only)
+    /// Bumped on every start(). The tap closure captures its generation and a callback
+    /// from a retired tap (a buffer still in flight when stop() removed it) is dropped,
+    /// so it can never append the previous take's audio to the next one.
+    private var generation = 0
 
     public init() {}
 
@@ -44,11 +57,14 @@ public final class AudioCaptureService: @unchecked Sendable {
 
         let format = input.outputFormat(forBus: 0)
         hwSampleRate = format.sampleRate
-        // Pre-reserve ~2 minutes to avoid reallocation mid-capture.
-        hwSamples.reserveCapacity(Int(hwSampleRate * 120))
+        // Reserve 30 s (~5.8 MB at 48 kHz) instead of 2 minutes; Swift arrays grow
+        // geometrically, so a long dictation costs a couple of reallocations, not a stall.
+        hwSamples.reserveCapacity(Int(hwSampleRate * 30))
 
-        input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
-            self?.consume(buffer)
+        lock.lock(); generation &+= 1; let gen = generation; lock.unlock()
+        // 2048 frames (~43 ms at 48 kHz): the most audio a stop() can leave in flight.
+        input.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak self] buffer, _ in
+            self?.consume(buffer, generation: gen)
         }
         engine.prepare()
         try engine.start()
@@ -66,9 +82,10 @@ public final class AudioCaptureService: @unchecked Sendable {
         engine.stop()
         isRecording = false
 
-        // Hand the backing buffer to the take and drop ours — frees the ~2 min
-        // reservation while idle instead of keeping it resident between takes.
-        lock.lock(); let mono = hwSamples; hwSamples = []; lock.unlock()
+        // Hand the backing buffer to the take and drop ours: frees the reservation
+        // while idle instead of keeping it resident between takes. Retire the tap
+        // generation at the same time so a buffer still in flight is dropped.
+        lock.lock(); let mono = hwSamples; hwSamples = []; generation &+= 1; lock.unlock()
         Log.info("Recording stopped: \(String(format: "%.2f", Double(mono.count) / hwSampleRate))s raw @ \(Int(hwSampleRate)) Hz")
         return RawTake(samples: mono, sampleRate: hwSampleRate)
     }
@@ -95,12 +112,12 @@ public final class AudioCaptureService: @unchecked Sendable {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         isRecording = false
-        lock.lock(); hwSamples = []; lock.unlock()
+        lock.lock(); hwSamples = []; generation &+= 1; lock.unlock()
     }
 
     // MARK: Tap
 
-    private func consume(_ buffer: AVAudioPCMBuffer) {
+    private func consume(_ buffer: AVAudioPCMBuffer, generation gen: Int) {
         guard let channels = buffer.floatChannelData else { return }
         let frames = Int(buffer.frameLength)
         let chCount = Int(buffer.format.channelCount)
@@ -108,11 +125,11 @@ public final class AudioCaptureService: @unchecked Sendable {
         var peak: Float = 0
         if chCount == 1 {
             // Mono fast path: peak via vDSP, append straight from the tap's channel
-            // data — no intermediate buffer, no per-callback allocation.
+            // data, no intermediate buffer, no per-callback allocation.
             let src = channels[0]
             vDSP_maxmgv(src, 1, &peak, vDSP_Length(frames))
             lock.lock()
-            hwSamples.append(contentsOf: UnsafeBufferPointer(start: src, count: frames))
+            if gen == generation { hwSamples.append(contentsOf: UnsafeBufferPointer(start: src, count: frames)) }
             lock.unlock()
         } else {
             // Downmix into a reused scratch buffer (tap thread only — no races).
@@ -127,7 +144,7 @@ public final class AudioCaptureService: @unchecked Sendable {
             scratch.withUnsafeBufferPointer { buf in
                 vDSP_maxmgv(buf.baseAddress!, 1, &peak, vDSP_Length(frames))
                 lock.lock()
-                hwSamples.append(contentsOf: UnsafeBufferPointer(start: buf.baseAddress!, count: frames))
+                if gen == generation { hwSamples.append(contentsOf: UnsafeBufferPointer(start: buf.baseAddress!, count: frames)) }
                 lock.unlock()
             }
         }
