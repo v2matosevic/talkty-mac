@@ -23,9 +23,9 @@ final class SettingsViewModel: ObservableObject {
     // Input). nil = the selected device doesn't expose a volume control.
     @Published var micVolume: Float?
 
-    // Vocabulary editors (comma-joined <-> [String])
+    // Vocabulary editors: comma-joined terms, and one "misheard => correct" rule per line.
     @Published var vocabularyText: String
-    @Published var replacementRows: [ReplacementRow]
+    @Published var replacementsText: String
 
     // OpenRouter API key. We do NOT read the stored secret (that would trigger a Keychain
     // access prompt every time Settings opens) — we only check existence. The field starts
@@ -43,21 +43,13 @@ final class SettingsViewModel: ObservableObject {
     private let store: SettingsStore
     private let onApply: () -> Void
 
-    struct ReplacementRow: Identifiable, Equatable {
-        let id = UUID()
-        var from: String
-        var to: String
-    }
-
     init(store: SettingsStore, onApply: @escaping () -> Void) {
         self.store = store
         self.onApply = onApply
         let s = store.settings
         self.draft = s
         self.vocabularyText = (s.customVocabulary ?? DefaultVocabulary.codingTerms).joined(separator: ", ")
-        self.replacementRows = (s.textReplacements ?? DefaultVocabulary.defaultReplacements)
-            .sorted { $0.key < $1.key }
-            .map { ReplacementRow(from: $0.key, to: $0.value) }
+        self.replacementsText = ReplacementRules.format(s.textReplacements ?? DefaultVocabulary.defaultReplacements)
         self.inputDevices = AudioDevices.inputDevices()
         refreshMicVolume()
     }
@@ -85,11 +77,7 @@ final class SettingsViewModel: ObservableObject {
     func save() {
         draft.customVocabulary = vocabularyText
             .split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        var dict: [String: String] = [:]
-        for row in replacementRows where !row.from.trimmingCharacters(in: .whitespaces).isEmpty {
-            dict[row.from] = row.to
-        }
-        draft.textReplacements = dict
+        draft.textReplacements = ReplacementRules.parse(replacementsText)
         // Persist the key BEFORE onApply() (which reloads the model + re-checks the key).
         // Typed value → replace; "Remove" → clear; left blank → keep the existing key.
         let typed = openRouterKey.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -204,7 +192,14 @@ final class SettingsViewModel: ObservableObject {
 
     func resetVocabulary() {
         vocabularyText = DefaultVocabulary.codingTerms.joined(separator: ", ")
-        replacementRows = DefaultVocabulary.defaultReplacements
-            .sorted { $0.key < $1.key }.map { ReplacementRow(from: $0.key, to: $0.value) }
+        replacementsText = ReplacementRules.format(DefaultVocabulary.defaultReplacements)
+    }
+
+    /// Rules the editor currently parses to (malformed lines don't count).
+    var replacementCount: Int { ReplacementRules.parse(replacementsText).count }
+
+    func openModelsFolder() {
+        try? FileManager.default.createDirectory(at: AppPaths.modelsDir, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(AppPaths.modelsDir)
     }
 }

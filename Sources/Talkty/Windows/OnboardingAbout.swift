@@ -11,9 +11,9 @@ struct OnboardingView: View {
 
     private struct Step { let n: Int; let title: String; let detail: String }
     private var steps: [Step] {
-        [Step(n: 1, title: "Download a model", detail: "Open Settings and download a Whisper model (Base is a good start)."),
-         Step(n: 2, title: "Press \(hotkey) anywhere", detail: "From any app, press your shortcut and start speaking."),
-         Step(n: 3, title: "Press again to finish", detail: "Your speech is transcribed locally and copied to the clipboard.")]
+        [Step(n: 1, title: "Download a model", detail: "Open Settings and download a Whisper model. Large v3 Turbo is the all-round pick; Base is fine for quick notes."),
+         Step(n: 2, title: "Press \(hotkey) anywhere", detail: "From any app, press your shortcut and start speaking. Esc cancels."),
+         Step(n: 3, title: "Press again to finish", detail: "Your speech is transcribed on-device and copied to the clipboard, or pasted at the cursor with auto-paste on. Hover the pill and tap ✦ to turn a take into a coding-agent prompt.")]
     }
 
     var body: some View {

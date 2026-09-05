@@ -9,8 +9,12 @@ import TalktyKit
 final class MainViewModel: ObservableObject {
     @Published var history: [HistoryEntry] = []
     @Published var searchText = ""
+    /// Id of the entry whose copy just succeeded, for a brief "Copied" flash.
+    @Published var copiedId: UUID?
     private let store: HistoryStore
+    private let clipboard = ClipboardService()
     private var observer: NSObjectProtocol?
+    private var copiedReset: DispatchWorkItem?
 
     init(history store: HistoryStore) {
         self.store = store
@@ -21,15 +25,37 @@ final class MainViewModel: ObservableObject {
         }
     }
 
-    /// History filtered by the search box (case-insensitive substring).
+    /// History filtered by the search box (case-insensitive substring, both halves of a prompt entry).
     var filtered: [HistoryEntry] {
         let q = searchText.trimmingCharacters(in: .whitespaces)
-        return q.isEmpty ? history : history.filter { $0.text.localizedCaseInsensitiveContains(q) }
+        return q.isEmpty ? history : history.filter {
+            $0.text.localizedCaseInsensitiveContains(q) || ($0.rawTranscription?.localizedCaseInsensitiveContains(q) ?? false)
+        }
     }
 
-    func copy(_ entry: HistoryEntry) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(entry.text, forType: .string)
+    /// Copy the entry's text (the generated prompt for a Prompting take). Only a
+    /// successful pasteboard write shows the "Copied" flash.
+    func copy(_ entry: HistoryEntry) { copy(entry.text, id: entry.id) }
+    /// Copy the words as spoken (Prompting takes only).
+    func copyRaw(_ entry: HistoryEntry) {
+        guard let raw = entry.rawTranscription else { return }
+        copy(raw, id: entry.id)
+    }
+    private func copy(_ text: String, id: UUID) {
+        guard clipboard.setText(text) else {
+            Log.warning("History: clipboard write failed")
+            return
+        }
+        copiedId = id
+        copiedReset?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.copiedId = nil }
+        copiedReset = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: work)
+    }
+
+    func delete(_ entry: HistoryEntry) {
+        store.remove(id: entry.id)
+        history = store.entries
     }
     func clearHistory() { store.clear(); history = []; searchText = "" }
 
@@ -41,7 +67,11 @@ final class MainViewModel: ObservableObject {
         panel.allowedContentTypes = [.plainText]
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        let body = history.map { "[\(f.string(from: $0.timestamp))]  \($0.text)" }.joined(separator: "\n")
+        let body = history.map { entry in
+            var line = "[\(f.string(from: entry.timestamp))]  \(entry.text)"
+            if let raw = entry.rawTranscription { line += "\n    (you said) \(raw)" }
+            return line
+        }.joined(separator: "\n")
         try? body.write(to: url, atomically: true, encoding: .utf8)
     }
 }
@@ -60,6 +90,7 @@ final class MainWindowController {
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
         window.backgroundColor = NSColor(Theme.bg)
+        window.isReleasedWhenClosed = false
         window.center()
         window.contentView = NSHostingView(rootView:
             MainView(state: state, vm: vm, onToggle: onToggle, onSettings: onSettings))
@@ -122,7 +153,7 @@ struct MainView: View {
                 }
             }.buttonStyle(.plain)
             Text(statusText).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.textPrimary)
-            Text(state.recordingState == .noModel ? "Open Settings to download a model" : "Press \(hotkeyBadge) anywhere")
+            Text(state.recordingState == .noModel ? "Open Settings to download a model" : "Press \(state.hotkeyDisplay) anywhere")
                 .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
             LevelBar(fraction: Double(state.audioLevel),
                      color: state.recordingState == .listening ? Theme.red : Theme.green, height: 3)
@@ -148,7 +179,7 @@ struct MainView: View {
             if !vm.history.isEmpty { searchField }
 
             if vm.history.isEmpty {
-                Text("Your transcriptions will appear here.")
+                Text("Your transcriptions will appear here. Press \(state.hotkeyDisplay) to start.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textFaint)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if vm.filtered.isEmpty {
@@ -159,16 +190,10 @@ struct MainView: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         ForEach(vm.filtered) { entry in
-                            Button { vm.copy(entry) } label: {
-                                HStack {
-                                    Text(entry.text).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
-                                        .lineLimit(1).truncationMode(.tail)
-                                    Spacer()
-                                    Text(timeString(entry.timestamp)).font(Theme.mono(10)).foregroundStyle(Theme.textFaint)
-                                }
-                                .padding(.horizontal, 20).padding(.vertical, 9)
-                                .contentShape(Rectangle())
-                            }.buttonStyle(HoverRowStyle())
+                            HistoryRow(entry: entry, copied: vm.copiedId == entry.id,
+                                       onCopy: { vm.copy(entry) },
+                                       onCopyRaw: { vm.copyRaw(entry) },
+                                       onDelete: { vm.delete(entry) })
                         }
                     }
                 }
@@ -194,26 +219,66 @@ struct MainView: View {
     }
 
     private var dotSize: CGFloat { state.recordingState == .listening ? 28 : 20 }
-    private var hotkeyBadge: String { "⌥Q" }   // reflects default; live value shown in Settings
     private var statusText: String {
         switch state.recordingState {
         case .idle, .copied, .cancelled: return "Ready to Record"
         case .listening: return "Recording…"
-        case .transcribing: return "Transcribing…"
+        case .transcribing: return state.promptingMode ? "Prompting…" : "Transcribing…"
         case .loadingModel: return "Loading Model…"
+        case .failed: return state.statusText
         case .noModel: return "No Model Loaded"
         }
     }
-    private func timeString(_ d: Date) -> String {
-        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f.string(from: d)
-    }
 }
 
-private struct HoverRowStyle: ButtonStyle {
+/// One history row. Click copies the text; a Prompting take shows a PROMPT badge and
+/// the words as spoken on a second line (click that line to copy just those). Hover
+/// reveals delete.
+private struct HistoryRow: View {
+    let entry: HistoryEntry
+    let copied: Bool
+    let onCopy: () -> Void
+    let onCopyRaw: () -> Void
+    let onDelete: () -> Void
     @State private var hovering = false
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(hovering ? Theme.card : Color.clear)
-            .onHover { hovering = $0 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Button(action: onCopy) {
+                    HStack(spacing: 6) {
+                        if entry.isPrompt { Pill(text: "PROMPT", color: Theme.purple) }
+                        Text(entry.text).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1).truncationMode(.tail)
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }.buttonStyle(.plain)
+                if copied {
+                    Text("Copied").font(.system(size: 10, weight: .medium)).foregroundStyle(Theme.green)
+                } else if hovering {
+                    Button(action: onDelete) {
+                        Image(systemName: "trash").font(.system(size: 10)).foregroundStyle(Theme.textFaint)
+                    }.buttonStyle(.plain).help("Delete this entry")
+                } else {
+                    Text(timeString(entry.timestamp)).font(Theme.mono(10)).foregroundStyle(Theme.textFaint)
+                }
+            }
+            if let raw = entry.rawTranscription {
+                Button(action: onCopyRaw) {
+                    Text("You said: \(raw)").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                        .lineLimit(1).truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }.buttonStyle(.plain).help("Copy the words as spoken")
+            }
+        }
+        .padding(.horizontal, 20).padding(.vertical, 9)
+        .background(hovering ? Theme.card : Color.clear)
+        .onHover { hovering = $0 }
+    }
+
+    private func timeString(_ d: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f.string(from: d)
     }
 }

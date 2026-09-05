@@ -111,6 +111,9 @@ struct SettingsSections: View {
                     }
                 }
             }
+            Button("Open models folder") { vm.openModelsFolder() }
+                .buttonStyle(.plain)
+                .font(.system(size: 11)).foregroundStyle(Theme.purple)
         }
     }
 
@@ -241,7 +244,7 @@ struct SettingsSections: View {
                 VStack(alignment: .leading, spacing: 12) {
                     CheckRow(label: "Copy to clipboard", isOn: $vm.draft.copyToClipboard)
                     CheckRow(label: "Auto-paste at cursor", isOn: $vm.draft.autoPaste,
-                             subtitle: "Types your text at the cursor in any app")
+                             subtitle: "Pastes your text at the cursor in any app")
                     if vm.draft.autoPaste { accessibilityStatus }
                     CheckRow(label: "Show notification", isOn: $vm.draft.showNotification)
                     CheckRow(label: "Sound feedback", isOn: $vm.draft.soundFeedback,
@@ -263,6 +266,8 @@ struct SettingsSections: View {
                     Divider().background(Theme.border)
                     CheckRow(label: "Metal GPU acceleration", isOn: $vm.draft.useGPU,
                              subtitle: "Recommended on Apple Silicon")
+                    CheckRow(label: "Free memory when idle", isOn: $vm.draft.unloadModelWhenIdle,
+                             subtitle: "Unloads the model after 15 minutes without dictation; it reloads while you speak")
                 }
             }
         }
@@ -304,8 +309,16 @@ struct SettingsSections: View {
                             .padding(6)
                             .background(RoundedRectangle(cornerRadius: 8).fill(Theme.bg))
                             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
+                        Text("Replacements (one per line: misheard => correct)").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                        TextEditor(text: $vm.replacementsText)
+                            .font(Theme.mono(11)).foregroundStyle(Theme.textPrimary)
+                            .scrollContentBackground(.hidden)
+                            .frame(height: 110)
+                            .padding(6)
+                            .background(RoundedRectangle(cornerRadius: 8).fill(Theme.bg))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.border, lineWidth: 1))
                         HStack {
-                            Text("\(vm.replacementRows.count) replacements")
+                            Text("\(vm.replacementCount) replacements. Matching is case-insensitive on whole words.")
                                 .font(.system(size: 11)).foregroundStyle(Theme.textFaint)
                             Spacer()
                             Button("Reset to defaults") { vm.resetVocabulary() }
