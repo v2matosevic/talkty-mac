@@ -8,6 +8,9 @@ enum RecordingState: Equatable {
     case transcribing
     case copied
     case cancelled
+    /// The take produced nothing usable (no speech, engine/cloud error, clipboard
+    /// unavailable). `statusText` carries the reason; the pill shows it briefly.
+    case failed
     case noModel
 }
 
@@ -20,12 +23,15 @@ final class AppState: ObservableObject {
     @Published var modelLoaded = false
     @Published var statusText = "Ready"
     @Published var updateAvailable: UpdateInfo? = nil
+    /// The registered shortcut, for hints ("Press ⌥Q anywhere"). Set by the dictation
+    /// controller whenever the hotkey is (re)registered.
+    @Published var hotkeyDisplay = HotkeyConfig.default.displayString
 
     /// "Prompting" mode for the CURRENT take: when on, the finished transcription is
     /// expanded into a structured coding-agent prompt before output. Toggled by the
     /// overlay sparkle; resets to off at the start of every recording (per-take).
     @Published var promptingMode = false
-    /// Mouse is over the recording pill — reveals the sparkle toggle. Driven by an
+    /// Mouse is over the recording pill, reveals the sparkle toggle. Driven by an
     /// AppKit tracking area (the overlay panel is non-key, so SwiftUI hover is unreliable).
     @Published var overlayHovering = false
 
@@ -38,9 +44,10 @@ final class AppState: ObservableObject {
     var accent: Color {
         switch recordingState {
         case .listening: return Theme.red
-        case .transcribing: return Theme.purple
+        case .transcribing: return promptingMode ? Theme.purple : Theme.purpleAlt
         case .copied: return Theme.green
         case .loadingModel: return Theme.orange
+        case .failed: return Theme.orange
         default: return Theme.green
         }
     }

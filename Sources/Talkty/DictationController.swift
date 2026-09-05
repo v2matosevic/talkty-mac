@@ -4,6 +4,11 @@ import TalktyKit
 /// The recording state machine. Wires the global hotkey to: capture → whisper →
 /// post-process → clipboard/auto-paste → overlay + history. Ported from the
 /// Windows MainViewModel/MainWindow orchestration.
+///
+/// Every take gets a `takeID`. ESC during transcription or Prompting bumps it, so a
+/// result that lands afterwards is discarded instead of pasted. The idle timer frees
+/// the model's memory after a quiet spell; the reload starts when the next recording
+/// starts, overlapping with the user speaking, and the take awaits it before decoding.
 @MainActor
 final class DictationController {
     private let state: AppState
@@ -27,6 +32,16 @@ final class DictationController {
     private var lastPasteAt: Date?
     private var continuesPreviousTake = false
 
+    /// Bumped on every start and every cancel. A finishing take carries the id it
+    /// started with; a mismatch means it was cancelled and its output is dropped.
+    private var takeID = 0
+    private var transcribeTask: Task<Void, Never>?
+
+    /// Idle model eviction (see `Constants.modelIdleUnload`).
+    private var idleTimer: Timer?
+    private var unloadedForIdle = false
+    private var reloadTask: Task<Bool, Never>?
+
     init(state: AppState, settings: SettingsStore, history: HistoryStore, overlay: OverlayController) {
         self.state = state
         self.settings = settings
@@ -43,14 +58,20 @@ final class DictationController {
 
     func registerHotkey() {
         hotkey.pushToTalk = settings.settings.pushToTalk
-        if !hotkey.registerToggle(settings.settings.hotkey) {
-            Log.warning("Failed to register hotkey \(settings.settings.hotkey.displayString)")
-        }
+        register(settings.settings.hotkey)
     }
     func updateHotkey(_ config: HotkeyConfig) {
         settings.update { $0.hotkey = config }
         hotkey.pushToTalk = settings.settings.pushToTalk
-        hotkey.registerToggle(config)
+        register(config)
+    }
+    private func register(_ config: HotkeyConfig) {
+        state.hotkeyDisplay = config.displayString
+        guard !hotkey.registerToggle(config) else { return }
+        Log.warning("Failed to register hotkey \(config.displayString)")
+        // The app lives in the menu bar; a log line alone leaves the user pressing a dead key.
+        notify("Shortcut unavailable",
+               "\(config.displayString) is taken by another app. Pick a different shortcut in Settings.")
     }
 
     // MARK: Hotkey edges (toggle vs push-to-talk)
@@ -64,7 +85,7 @@ final class DictationController {
     /// Push-to-talk: pressing the hotkey starts recording.
     private func pttStart() {
         switch state.recordingState {
-        case .idle, .copied, .cancelled: startListening()
+        case .idle, .copied, .cancelled, .failed: startListening()
         case .noModel: NotificationCenter.default.post(name: .talktyOpenSettings, object: nil)
         default: break
         }
@@ -77,6 +98,9 @@ final class DictationController {
     // MARK: Model
 
     func loadModel() {
+        stopIdleTimer()
+        unloadedForIdle = false
+        reloadTask = nil
         let spec = settings.settings.model
         guard spec.isDownloaded else {
             Log.warning("Load model: \(spec.id) not downloaded")
@@ -96,11 +120,57 @@ final class DictationController {
             let dt = -t0.timeIntervalSinceNow
             Log.info("Load model: \(ok ? "ready" : "FAILED") in \(String(format: "%.2f", dt))s (incl. warmup)")
             await MainActor.run { [weak self] in
-                self?.state.modelLoaded = ok
-                self?.state.recordingState = ok ? .idle : .noModel
-                self?.state.statusText = ok ? "Ready"
+                guard let self else { return }
+                self.state.modelLoaded = ok
+                self.state.recordingState = ok ? .idle : .noModel
+                self.state.statusText = ok ? "Ready"
                     : (spec.isCloud ? "Add OpenRouter API key in Settings" : "Model failed to load")
+                if ok { self.armIdleTimer() }
             }
+        }
+    }
+
+    // MARK: Idle eviction
+
+    private func armIdleTimer() {
+        stopIdleTimer()
+        let s = settings.settings
+        guard s.unloadModelWhenIdle, !s.model.isCloud, state.modelLoaded else { return }
+        idleTimer = Timer.scheduledTimer(withTimeInterval: Constants.modelIdleUnload, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.idleTimerFired() }
+        }
+        idleTimer?.tolerance = 30
+    }
+    private func stopIdleTimer() {
+        idleTimer?.invalidate()
+        idleTimer = nil
+    }
+    private func idleTimerFired() {
+        idleTimer = nil
+        switch state.recordingState {
+        case .idle, .copied, .cancelled, .failed: break
+        default: armIdleTimer(); return   // mid-take or loading: try again later
+        }
+        guard settings.settings.unloadModelWhenIdle, !unloadedForIdle, transcription.isModelLoaded else { return }
+        unloadedForIdle = true
+        let transcription = self.transcription
+        Log.info("Idle: no take for \(Int(Constants.modelIdleUnload)) s, freeing the model's memory (reloads on next take)")
+        Task.detached(priority: .utility) { transcription.unload() }
+    }
+
+    /// Kick off the reload the moment a recording starts, so it runs while the user
+    /// is speaking. `stopAndTranscribe` awaits it before decoding.
+    private func startIdleReloadIfNeeded() {
+        guard unloadedForIdle, reloadTask == nil else { return }
+        let spec = settings.settings.model
+        let useGPU = settings.settings.useGPU
+        let transcription = self.transcription
+        Log.info("Idle reload: \(spec.id) loading while you speak")
+        reloadTask = Task.detached(priority: .userInitiated) {
+            let t0 = Date()
+            let ok = transcription.loadModel(spec, useGPU: useGPU)
+            Log.info("Idle reload: \(ok ? "ready" : "FAILED") in \(String(format: "%.2f", -t0.timeIntervalSinceNow))s")
+            return ok
         }
     }
 
@@ -110,7 +180,7 @@ final class DictationController {
         Log.debug("Hotkey toggle (state=\(state.recordingState))")
         switch state.recordingState {
         case .listening: stopAndTranscribe()
-        case .idle, .copied, .cancelled: startListening()
+        case .idle, .copied, .cancelled, .failed: startListening()
         case .noModel:
             Log.info("Toggle ignored: no model loaded → opening Settings")
             NotificationCenter.default.post(name: .talktyOpenSettings, object: nil)
@@ -140,6 +210,7 @@ final class DictationController {
 
     private func beginCapture() {
         cancelPendingReset()   // a prior take's reset must not tear down this one
+        stopIdleTimer()
         continuesPreviousTake = lastPasteAt.map {
             Date().timeIntervalSince($0) < Constants.takeContinuationWindow
         } ?? false
@@ -155,9 +226,13 @@ final class DictationController {
             try audio.start(deviceID: deviceID)
         } catch {
             Log.error("Failed to start capture: \(error)")
+            if s.duckVolumeWhileRecording { ducking.restore() }
             notify("Couldn't start recording", "\(error.localizedDescription)")
+            armIdleTimer()
             return
         }
+        takeID &+= 1
+        startIdleReloadIfNeeded()
         // Prompting is per-take: every recording starts with it OFF; the user toggles
         // the overlay sparkle on during the take if they want a refined agent prompt.
         state.promptingMode = false
@@ -173,7 +248,6 @@ final class DictationController {
     private func stopAndTranscribe() {
         Log.info("■ Stop requested after \(String(format: "%.1f", state.elapsed))s")
         stopTimer()
-        hotkey.unregisterCancel()
         let take = audio.stop()   // cheap: raw buffer handoff, no resample/trim
         if settings.settings.duckVolumeWhileRecording {
             ducking.restore()
@@ -181,101 +255,177 @@ final class DictationController {
         state.recordingState = .transcribing
         state.statusText = "Transcribing…"
         state.audioLevel = 0   // freeze the meter; we're no longer capturing
+        // ESC stays armed through transcription and Prompting: it discards the output.
 
+        let id = takeID
         let settingsSnapshot = settings.settings
         let transcription = self.transcription
         let promptRefiner = self.promptRefiner
         let promptMode = state.promptingMode   // captured for THIS take
+        let reload = reloadTask
         // Resample + trim + whisper all run off the main actor; only finish() hops back.
-        Task.detached(priority: .userInitiated) { [weak self] in
-            let samples = AudioCaptureService.finalize(take)
-            let result = await transcription.transcribe(samples: samples, settings: settingsSnapshot)
+        transcribeTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }   // rebind: a weak `var` capture is a Swift 6 error in a @Sendable closure
 
+            // A muted or disconnected input delivers exact zeros. Don't feed whisper a
+            // silent clip (it hallucinates); quiet nonzero audio still goes through.
+            if take.isDigitalSilence {
+                await MainActor.run { self.finish(.failure("No audio detected. Is the mic muted?"), raw: nil, id: id) }
+                return
+            }
+            let samples = AudioCaptureService.finalize(take)
+
+            // The model was evicted while idle: the reload started with the recording.
+            if let reload {
+                let ok = await reload.value
+                await MainActor.run {
+                    self.reloadTask = nil
+                    self.unloadedForIdle = !ok
+                }
+                guard ok else {
+                    await MainActor.run { self.finish(.failure("Model failed to load"), raw: nil, id: id) }
+                    return
+                }
+            }
+            guard !Task.isCancelled else { return }
+
+            let result = await transcription.transcribe(samples: samples, settings: settingsSnapshot)
+            guard !Task.isCancelled else { return }
+
             // Prompting: expand the dictation into a structured coding-agent prompt.
-            // Fails safe — any miss keeps the raw transcription, never lost.
+            // Fails safe: any miss keeps the raw transcription, never lost.
             var finalResult = result
+            var raw: String? = nil
             if promptMode, result.success, !result.text.isEmpty {
                 if promptRefiner.isConfigured {
                     await MainActor.run { self.state.statusText = "Refining prompt…" }
-                    if let refined = await promptRefiner.refine(result.text, primaryModel: settingsSnapshot.promptingModelId),
-                       !refined.isEmpty {
+                    let refined = await promptRefiner.refine(result.text, primaryModel: settingsSnapshot.promptingModelId)
+                    guard !Task.isCancelled else { return }
+                    if let refined, !refined.isEmpty {
                         Log.info("Prompt mode: expanded \(result.text.count) → \(refined.count) chars")
                         finalResult = TranscriptionResult(text: refined, duration: result.duration)
+                        raw = result.text
                     } else {
-                        Log.warning("Prompt refinement returned nothing — using raw transcription")
+                        Log.warning("Prompt refinement returned nothing, using raw transcription")
+                        let reason = promptRefiner.lastError ?? "Prompting failed"
+                        await MainActor.run {
+                            self.notify("Prompting fell back to plain text", "\(reason) Your dictation was pasted as spoken.")
+                        }
                     }
                 } else {
-                    Log.warning("Prompt mode on but no OpenRouter key — skipping refinement")
+                    Log.warning("Prompt mode on but no OpenRouter key, skipping refinement")
                     await MainActor.run {
                         self.notify("Prompting needs a key",
                                     "Add your OpenRouter API key in Settings to use Prompting.")
                     }
                 }
             }
-            let toFinish = finalResult   // immutable copy for the @Sendable hop
-            await MainActor.run { self.finish(toFinish) }
+            let toFinish = finalResult   // immutable copies for the @Sendable hop
+            let rawForHistory = raw
+            await MainActor.run { self.finish(toFinish, raw: rawForHistory, id: id) }
         }
     }
 
-    private func finish(_ result: TranscriptionResult) {
+    private func finish(_ result: TranscriptionResult, raw: String?, id: Int) {
+        guard id == takeID else {
+            Log.debug("Stale take #\(id) finished after cancel, output dropped")
+            return
+        }
+        transcribeTask = nil
+        hotkey.unregisterCancel()
+        if result.wasCancelled {
+            settle(.cancelled, "Cancelled")
+            return
+        }
         guard result.success, !result.text.isEmpty else {
-            Log.info("Result: empty — \(result.errorMessage ?? "no speech detected")")
-            state.statusText = result.errorMessage ?? "No speech detected"
-            resetSoon()
+            fail(result.errorMessage ?? "No speech detected")
             return
         }
         let text = result.text
         state.lastText = text
         let s = settings.settings
-        Log.info("Result: \(text.count) chars in \(String(format: "%.2f", result.duration))s — \"\(Log.preview(text))\"")
+        Log.info("Result: \(text.count) chars in \(String(format: "%.2f", result.duration))s, \"\(Log.preview(text))\"")
 
+        var clipboardOK = true
         if s.copyToClipboard {
-            clipboard.setText(text)
-            Log.debug("Clipboard set (\(text.count) chars)")
+            clipboardOK = clipboard.setText(text)
+            Log.debug("Clipboard set (\(text.count) chars): \(clipboardOK)")
         }
         if s.autoPaste {
             // Continuous dictation: separate this take from the previous one. Only the
-            // typed text gets the space — the clipboard keeps the clean transcription.
+            // pasted text gets the space; the clipboard keeps the clean transcription.
             let pasteText = continuesPreviousTake ? " " + text : text
             switch autoPaste.insert(pasteText, keepOnClipboard: s.copyToClipboard ? text : nil) {
             case .pasted:
                 lastPasteAt = Date()
+                clipboardOK = true   // the paste path wrote the pasteboard itself
                 Log.info("Auto-paste: inserted \(pasteText.count) chars at cursor"
                     + (continuesPreviousTake ? " (continuation)" : ""))
             case .needsPermission:
-                if !s.copyToClipboard { clipboard.setText(text) }   // fallback so ⌘V works
-                Log.warning("Auto-paste: needs Accessibility — text on clipboard (⌘V to paste)")
+                if !s.copyToClipboard { clipboardOK = clipboard.setText(text) }   // fallback so ⌘V works
+                Log.warning("Auto-paste: needs Accessibility, text on clipboard (⌘V to paste)")
                 remindAccessibilityOnce()
             case .failed:
-                if !s.copyToClipboard { clipboard.setText(text) }
-                Log.error("Auto-paste: insert failed — text on clipboard")
+                if !s.copyToClipboard { clipboardOK = clipboard.setText(text) }
+                Log.error("Auto-paste: insert failed, text on clipboard")
+                notify("Auto-paste failed", clipboardOK ? "Your text is on the clipboard. Press ⌘V to paste."
+                                                       : "Your text is saved in History.")
             }
         }
-        history.add(HistoryEntry(text: text, durationSeconds: result.duration))
+        history.add(HistoryEntry(text: text, durationSeconds: result.duration, rawTranscription: raw))
         Log.debug("History: entry added")
         NotificationCenter.default.post(name: .talktyHistoryChanged, object: nil)
 
-        state.recordingState = .copied
-        state.statusText = "Copied"
+        if s.copyToClipboard, !clipboardOK {
+            // The text is safe in History; say so instead of claiming "Copied".
+            fail("Clipboard unavailable, saved to History")
+            return
+        }
+        settle(.copied, "Copied")
         if s.soundFeedback { Sounds.done() }
         if s.showNotification { notify("Transcribed", text) }
-        resetSoon()
     }
 
-    func cancel() {
-        guard state.recordingState == .listening else { return }
-        Log.info("✕ Dictation cancelled (ESC)")
+    /// A take that produced nothing usable. The pill shows the reason a bit longer.
+    private func fail(_ message: String) {
+        Log.info("Result: none, \(message)")
+        state.recordingState = .failed
+        state.statusText = message
         if settings.settings.soundFeedback { Sounds.cancel() }
-        stopTimer()
-        hotkey.unregisterCancel()
-        audio.cancel()
-        if settings.settings.duckVolumeWhileRecording {
-            ducking.restore()
-        }
-        state.recordingState = .cancelled
-        state.statusText = "Cancelled"
+        resetSoon(after: Constants.failureResetDelay)
+        armIdleTimer()
+    }
+
+    private func settle(_ newState: RecordingState, _ status: String) {
+        state.recordingState = newState
+        state.statusText = status
         resetSoon()
+        armIdleTimer()
+    }
+
+    /// ESC. While recording: drop the audio. While transcribing or Prompting: abort the
+    /// engine / request and discard whatever result still arrives.
+    func cancel() {
+        switch state.recordingState {
+        case .listening:
+            Log.info("✕ Dictation cancelled (ESC)")
+            stopTimer()
+            audio.cancel()
+            if settings.settings.duckVolumeWhileRecording {
+                ducking.restore()
+            }
+        case .transcribing:
+            Log.info("✕ Transcription cancelled (ESC), output discarded")
+            takeID &+= 1
+            transcribeTask?.cancel()
+            transcribeTask = nil
+            transcription.engine.requestAbort()
+        default:
+            return
+        }
+        hotkey.unregisterCancel()
+        if settings.settings.soundFeedback { Sounds.cancel() }
+        settle(.cancelled, "Cancelled")
     }
 
     // MARK: Timer + reset
@@ -297,20 +447,23 @@ final class DictationController {
         resetWork = nil
     }
 
-    private func resetSoon() {
+    private func resetSoon(after delay: TimeInterval = Constants.statusResetDelay) {
         cancelPendingReset()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.resetWork = nil
-            // A new take started during the delay — leave it alone entirely.
-            guard self.state.recordingState != .listening else { return }
+            // A new take started during the delay: leave it alone entirely.
+            switch self.state.recordingState {
+            case .listening, .transcribing: return
+            default: break
+            }
             self.overlay.hide()
             self.state.recordingState = self.state.modelLoaded ? .idle : .noModel
             self.state.statusText = self.state.modelLoaded ? "Ready" : "No model"
             self.state.audioLevel = 0
         }
         resetWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + Constants.statusResetDelay, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     private func notify(_ title: String, _ body: String) {
@@ -323,17 +476,17 @@ final class DictationController {
     /// (with its "Open System Settings" button). Called when settings are applied.
     func ensureAutoPastePermission() {
         guard settings.settings.autoPaste, !PermissionsService.hasAccessibility else { return }
-        Log.info("Auto-paste enabled without Accessibility — prompting")
+        Log.info("Auto-paste enabled without Accessibility, prompting")
         PermissionsService.requestAccessibility()
     }
 
-    /// One-time gentle nudge at paste time if Accessibility still isn't granted —
-    /// the text is already on the clipboard, so ⌘V works as a fallback.
+    /// One-time gentle nudge at paste time if Accessibility still isn't granted; the
+    /// text is already on the clipboard, so ⌘V works as a fallback.
     private func remindAccessibilityOnce() {
         guard !settings.settings.hints.hasSeenAutoPasteHint else { return }
         settings.update { $0.hints.hasSeenAutoPasteHint = true }
         notify("Auto-paste needs Accessibility",
-               "Enable Talkty in System Settings → Privacy & Security → Accessibility. Your text is on the clipboard — press ⌘V.")
+               "Enable Talkty in System Settings → Privacy & Security → Accessibility. Your text is on the clipboard, press ⌘V.")
         PermissionsService.openAccessibilitySettings()
     }
 }

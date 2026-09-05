@@ -15,9 +15,12 @@ struct OverlayView: View {
                 .frame(width: 26, height: 18)
             Text(label)
                 .font(Theme.mono(13, .medium))
-                .foregroundStyle(state.recordingState == .copied ? Theme.green : Theme.textPrimary)
+                .foregroundStyle(labelColor)
                 .monospacedDigit()
-                .fixedSize()
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: state.recordingState == .failed ? 150 : nil)
+                .fixedSize(horizontal: state.recordingState != .failed, vertical: true)
             PromptToggle(state: state)
         }
         .padding(.horizontal, 14)
@@ -33,14 +36,25 @@ struct OverlayView: View {
                 .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
         )
         .fixedSize()
+        .help(state.recordingState == .listening ? "Esc cancels" : "")
     }
 
     private var label: String {
         switch state.recordingState {
-        case .transcribing: return "···"
+        case .transcribing: return state.promptingMode ? "Prompting…" : "···"
         case .copied: return "Copied"
         case .cancelled: return "Cancelled"
+        case .failed: return state.statusText
         default: return state.elapsedDisplay
+        }
+    }
+
+    private var labelColor: Color {
+        switch state.recordingState {
+        case .copied: return Theme.green
+        case .failed: return Theme.orange
+        case .transcribing where state.promptingMode: return Theme.purple
+        default: return Theme.textPrimary
         }
     }
 }
@@ -69,7 +83,7 @@ private struct PromptToggle: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Prompting — turn this dictation into a structured prompt for a coding AI agent")
+        .help("Prompting: turn this dictation into a structured prompt for a coding AI agent")
         .opacity(revealed ? 1 : 0)
         .allowsHitTesting(revealed)
         // Reserve the 18pt slot for the whole take (so revealing on hover never shifts

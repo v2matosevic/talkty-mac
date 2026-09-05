@@ -17,9 +17,13 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// the actual login-item status, which is reconciled at launch.
     public var launchAtLogin: Bool = false
 
-    /// Metal GPU acceleration. On by default — this is Apple Silicon's fast path
+    /// Metal GPU acceleration. On by default: this is Apple Silicon's fast path
     /// (the Windows default was CPU because GPU was optional there).
     public var useGPU: Bool = true
+
+    /// Free the model's memory after `Constants.modelIdleUnload` without a take; it
+    /// reloads while the next recording is in progress. Default on, as on Windows 1.2.
+    public var unloadModelWhenIdle: Bool = true
 
     /// Lower system output volume during recording so background audio doesn't
     /// drown the mic.
@@ -44,7 +48,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case modelId, selectedMicrophoneId, copyToClipboard, autoPaste, showNotification
-        case soundFeedback, language, autoDetectLanguage, launchAtLogin, useGPU
+        case soundFeedback, language, autoDetectLanguage, launchAtLogin, useGPU, unloadModelWhenIdle
         case duckVolumeWhileRecording, volumeDuckLevel, useCustomVocabulary
         case customVocabulary, textReplacements, promptingModelId, hotkey, pushToTalk, hints
     }
@@ -66,6 +70,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         autoDetectLanguage = try c.decodeIfPresent(Bool.self, forKey: .autoDetectLanguage) ?? d.autoDetectLanguage
         launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? d.launchAtLogin
         useGPU = try c.decodeIfPresent(Bool.self, forKey: .useGPU) ?? d.useGPU
+        unloadModelWhenIdle = try c.decodeIfPresent(Bool.self, forKey: .unloadModelWhenIdle) ?? d.unloadModelWhenIdle
         duckVolumeWhileRecording = try c.decodeIfPresent(Bool.self, forKey: .duckVolumeWhileRecording) ?? d.duckVolumeWhileRecording
         volumeDuckLevel = try c.decodeIfPresent(Float.self, forKey: .volumeDuckLevel) ?? d.volumeDuckLevel
         useCustomVocabulary = try c.decodeIfPresent(Bool.self, forKey: .useCustomVocabulary) ?? d.useCustomVocabulary

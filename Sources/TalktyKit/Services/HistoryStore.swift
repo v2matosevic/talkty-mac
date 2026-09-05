@@ -8,7 +8,7 @@ public final class HistoryStore {
     public private(set) var entries: [HistoryEntry]
     private let url = AppPaths.historyFile
     private let encoder = JSONEncoder()   // reused; only ever touched on ioQueue
-    /// Persistence runs off the caller's thread — add() fires on the main actor at
+    /// Persistence runs off the caller's thread: add() fires on the main actor at
     /// the end of every dictation and the in-memory array is the source of truth.
     private let ioQueue = DispatchQueue(label: "hr.version2.talkty.history", qos: .utility)
 
@@ -29,6 +29,11 @@ public final class HistoryStore {
         save()
     }
 
+    public func remove(id: UUID) {
+        entries.removeAll { $0.id == id }
+        save()
+    }
+
     public func clear() {
         entries = []
         save()
@@ -46,7 +51,7 @@ public final class HistoryStore {
         }
     }
 
-    /// Drain any pending write — call before _exit(0) at quit so the last take's
+    /// Drain any pending write. Call before _exit(0) at quit so the last take's
     /// entry isn't lost.
     public func flush() {
         ioQueue.sync {}
