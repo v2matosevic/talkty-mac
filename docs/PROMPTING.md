@@ -93,6 +93,18 @@ only add latency. Slugs verified live against OpenRouter (June 2026).
 > for its quality when latency doesn't matter.
 
 `PromptingModels.chain(primary:)` builds the order (chosen model first, then the rest, deduped).
+
+Three guards decide when the chain moves on (all from the Windows app, 1.1.3 to 1.1.6):
+
+- **Key-level failures end the chain.** A 401 (invalid key) or 402 (no credits) from
+  OpenRouter would fail identically on every model, so `refine` returns nil at once and
+  `lastError` carries the reason; the dictation controller shows it in a notification.
+- **Truncation is a failure.** `finish_reason == "length"` means the provider cut the
+  prompt at `max_tokens` (8192, so this is rare); an incomplete prompt escalates.
+- **Completeness guard.** For inputs of at least 400 characters, an output shorter than
+  60% of the input means the model summarized instead of reformatting, and the chain
+  escalates. The last model keeps its result regardless (short beats raw). Thresholds
+  in `Constants.promptCompletenessMin*`, logic in `PromptRefinementService.isSuspectedSummary`.
 Per-attempt timeout is a hard 12 s (`Constants.promptRefinementTimeout`; both URLSession request +
 resource timeouts) so a slow model drops through in ~12 s, not ~20 s+. To change the lineup edit
 `PromptingModels.all`; verify any new slug against <https://openrouter.ai/models> first.

@@ -38,14 +38,17 @@ leaves the device unless you deliberately turn on a cloud feature.
 - **Fast.** Real-time factor around 0.01 to 0.1 on an M-series GPU. An 11 second clip
   transcribes in about 0.1 seconds.
 - **Menu-bar app.** Press the hotkey from anywhere. A floating pill shows the live waveform.
-- **Type at the cursor.** Optionally inserts text right where you are typing, with
-  clipboard-safe keystroke injection. Ideal for editors and terminals.
+- **Paste at the cursor.** Optionally inserts text right where you are typing, via
+  the clipboard and a synthesized Cmd+V, so editors and terminals get exactly the
+  text. Esc cancels a take at any point.
 - **Recording volume ducking.** Fades background audio down while you speak, then back up.
 - **Quiet-mic friendly.** Boost-only auto-gain levels each take before transcription,
   and a mic input volume slider lives in Settings.
 - **Clean output.** Re-joins false sentence breaks, strips Whisper hallucinations
   (like "Thanks for watching" and `[MUSIC]`), and applies a custom coding vocabulary.
 - **In-app model manager.** Download Whisper models (Fast, Balanced, Accurate) with resume.
+- **Light when idle.** The model's memory is freed after 15 minutes without
+  dictation and reloads while you speak.
 - **Cloud transcription** *(opt-in)*. Route a take through OpenRouter models for extra
   accuracy. Local stays the default.
 - **Prompting mode** *(opt-in)*. Turn a dictation into a structured prompt for a coding

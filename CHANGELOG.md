@@ -2,8 +2,47 @@
 
 User-facing changes, newest first.
 
-## [Unreleased]
+## [1.5.0] - 2026-09-05
 
+Parity pass with the Windows app (1.1.6 through 1.3.1), plus the paste fix.
+
+- Esc now also cancels while Talkty is transcribing or building a prompt. The
+  result is discarded and nothing is pasted.
+- The model's memory is freed after 15 minutes without dictation and reloads
+  while you speak, so Large v3 Turbo no longer holds 1.6 GB around the clock.
+  Toggle: Settings > Behavior > Free memory when idle (on by default).
+- Failures show on the recording pill (no speech, muted microphone, cloud error,
+  clipboard unavailable) instead of vanishing. When Prompting falls back to plain
+  text, a notification says why.
+- Cleanup no longer deletes a real "thank you", "bye" or a trailing "you". Only
+  YouTube-style closings at the very end of a transcript are stripped, plus a
+  lone "you" from silence.
+- Punctuation cleanup keeps abbreviations ("e.g. the", "i.e.", "vs.", "etc.") and
+  no longer shortens an ellipsis.
+- The English coding vocabulary prompt is skipped when transcribing other
+  languages or with auto-detect. It biased Croatian and others toward English.
+- The default replacements no longer rewrite "cloud" to "Claude" or "sequel" to
+  "SQL" ("AWS cloud" became "AWS Claude"). Saved rules are untouched; re-add them
+  in Settings if you want them.
+- Text replacements are editable in Settings > Vocabulary, one rule per line
+  ("misheard => correct"), with Reset to defaults. "Open models folder" link in
+  Settings > Model.
+- Prompting: an invalid or out-of-credits OpenRouter key fails at once with a
+  clear notice instead of trying every model. A prompt cut off by the model's
+  output limit, or one that summarized a long dictation, escalates to the next
+  model.
+- Cloud transcription retries once on rate limits and gateway errors.
+- History keeps both halves of a Prompting take, the words you said and the
+  prompt it produced, with a PROMPT badge. Entries can be deleted on hover.
+  Search covers both.
+- A muted microphone (digital silence) skips transcription with a clear notice.
+  A new recording can never pick up audio still in flight from the previous one.
+- After auto-paste, the clipboard is only rewritten or restored if it still
+  holds the pasted text, so a newer copy is never clobbered.
+- The main window and the empty-history hint show your actual shortcut. A
+  shortcut another app already owns is reported with a notification.
+- Error notifications work even with "Show notification" off (permission is
+  asked on the first notice).
 - Auto-paste now pastes (clipboard + Cmd+V) instead of typing the text as key
   events. Typing doubled every 20th character in xterm.js terminals such as
   Hephaestus ("TTake a look at the appplication"); paste goes through each app's

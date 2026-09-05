@@ -32,6 +32,7 @@ Scripts/
   build_whisper.sh       (re)build the Metal+CoreML static libs into Vendor/whisper-install
   make_app.sh            assemble + sign dist/Talkty.app  (--install → /Applications)
   make_dmg.sh            package a drag-to-Applications DMG for release
+                         (version: TALKTY_VERSION > exact git tag > version.json)
   make_coreml.sh         generate a per-model Core ML (ANE) encoder .mlmodelc
   dev_identity.sh        create the stable self-signed signing identity (TCC persists)
 ```
@@ -45,6 +46,13 @@ swift build                          # build everything
 # smoke benchmark knobs: TALKTY_RUNS=<n> (median-of-n, warm pass first),
 #                        TALKTY_AUDIO_CTX=<n> (encoder window override)
 ```
+
+**Release order:** `version.json` is the update feed read from `main`, so bump it only
+AFTER the GitHub release is published. Tag `vX.Y.Z` first (the scripts stamp the
+version from the tag), let the Release workflow build the DMG and publish, then bump
+the feed. Test hooks from the signed bundle: `Talkty --type-text "hi" 3`,
+`Talkty --key 12 option` (⌥Q), `Talkty --key 53` (Esc). They are for a human-run
+script; never drive the owner's live desktop with them.
 
 `brew install cmake` is required for the whisper build. Xcode is optional —
 open `Package.swift` in it to edit; the runnable `.app` is assembled by a
@@ -94,10 +102,26 @@ and the tests build fine either way.
 - Whisper: greedy, temperature 0, `best_of` 1, **`temperature_inc` 0** (whisper's
   default 0.2 silently enables a 6-step re-decode fallback ladder — keep it off),
   no context carryover; threads = logical/2 capped at 8.
-- Post-processing order: JoinSegments (re-join `period + lowercase` false
-  breaks) → CleanupPunctuation → ApplyReplacements (vocabulary) →
-  StripHallucinations (`Thanks/Bye/Subscribe/[MUSIC]/`, 3+ ellipsis, trailing
-  "you").
+- Post-processing order (Windows 1.3 order): JoinSegments (re-join `period +
+  lowercase` false breaks) → StripHallucinations → ApplyReplacements (vocabulary)
+  → CleanupPunctuation. Stripping is conservative: non-speech tokens (`[MUSIC]`,
+  `(laughing)`, ♪) anywhere, YouTube closings ("Thanks for watching", "Please
+  subscribe") only as the trailing phrase, a lone "you" only as the whole text.
+  A real "thank you", "bye" or trailing "you" is kept. Cleanup keeps
+  abbreviations (`e.g. the`, `i.e.`, `vs.`, `etc.`) and ellipses.
+- Vocabulary prompt is English-only: `buildPrompt` returns nil unless the
+  resolved language is `en` (an English prompt biases Croatian/auto-detect toward
+  English). Default replacements no longer include `cloud→Claude` / `sequel→SQL`.
+- Esc cancels in every take phase. During `.transcribing` (incl. Prompting) it
+  bumps `takeID`, cancels the task, and trips whisper's abort callback; a result
+  arriving afterwards is dropped in `finish()`. The Esc hotkey stays registered
+  until finish/reset.
+- Idle unload (default on, `unloadModelWhenIdle`): 15 min without a take frees
+  the engine; the reload starts when the next recording starts and the take
+  awaits it. `defaults write hr.version2.talkty idleUnloadSeconds -int 20` for
+  testing. Cloud models are never unloaded. See docs/REBUILD.md 1.5.0.
+- `RecordingState.failed` puts the reason on the pill (orange, 2.5 s): no speech,
+  muted mic (digital silence, exact zeros), cloud error, clipboard unavailable.
 - Whisper prompt budget: whisper keeps only the LAST 223 initial-prompt tokens
   (`n_text_ctx/2 - 1`), so an over-long prompt loses its head. The default 80-term
   vocabulary prompt was 367 tokens: the context sentences were silently dropped and the
@@ -123,6 +147,7 @@ and the tests build fine either way.
   per-take). `beamSearch` — 5-beam decoding instead of greedy (read per-take; the
   Transcribed log line shows `beam=5`; ~+0.1–0.2 s per take on M5, the standard
   accuracy lever for short/mumbled clips — A/B pending on real takes).
+  `idleUnloadSeconds` (int) — shorten the idle-unload delay for testing.
   `autoPasteMethod` (string `paste`|`type`, read per insert) — see auto-paste note
   above. `experimentalAudioCtx` — size the encoder window to the clip
   (read per-take). **Failed real-take validation 2026-06-11**: in-app takes
@@ -143,9 +168,12 @@ and the tests build fine either way.
   `?output_modalities=transcription`. Claude can't transcribe (no ASR endpoint).
 - **Prompting** = hover-revealed ✦ toggle on the recording pill (`PromptToggle` in
   OverlayView). Per-take, resets each recording. `PromptRefinementService` expands dictation →
-  coding-agent prompt; **fails safe** to the raw transcription on any error. The model is
+  coding-agent prompt; **fails safe** to the raw transcription on any error (and the
+  controller notifies with `lastError`). 401/402 end the chain at once; `finish_reason ==
+  length` and the completeness guard (input ≥ 400 chars, output < 60%) escalate to the
+  next model. History keeps `rawTranscription` next to the prompt. The model is
   user-selectable in Settings → Prompting (`AppSettings.promptingModelId`, default
-  `minimax/minimax-m3`; lineup in `PromptingModels`); the picked model leads and the rest fall
+  `google/gemini-3.1-flash-lite`; lineup in `PromptingModels`); the picked model leads and the rest fall
   back automatically. The `systemPrompt` is research-grounded (classify-size-first, faithful,
   hygiene) — see docs/PROMPTING.md before editing it.
 - **Keychain reads prompt the user** for the secret. `KeychainService.hasOpenRouterKey` is an

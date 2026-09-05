@@ -269,3 +269,77 @@ Round two of the optimization sweep — robustness and the long tail:
   AirPods in A2DP the whole time (no dropout) and gives wideband dictation audio; the
   trade-off is you must be near the Mac to be heard. A future "use built-in mic for
   dictation when a Bluetooth input is selected" toggle could automate this.
+
+## 1.5.0 — Windows parity pass (2026-09-05)
+
+The Windows app shipped 1.1.6 through 1.3.1 (idle unload, failure visibility,
+accuracy fixes, the 1.3.1 "recording and output reliability" pass) while the Mac
+sat on 1.4. This release ports what applies. Mechanism, for the next agent:
+
+**Take identity and Esc.** `DictationController.takeID` increments on every start
+and every cancel. The transcription task captures its id and `finish(_:raw:id:)`
+drops a result whose id no longer matches. Esc during `.transcribing` (which
+covers Prompting) bumps the id, cancels the `Task`, and calls
+`engine.requestAbort()` so whisper bails within one decode step; the Esc hotkey
+now stays registered until finish/reset instead of being dropped at stop. The
+Windows 1.3.1 bug this prevents: a cancelled Prompting take pasting the raw text.
+
+**Idle unload.** One-shot `Timer` on the main actor, armed after a successful
+load and after every settle/fail, `tolerance` 30 s, `Constants.modelIdleUnload`
+(15 min; `idleUnloadSeconds` defaults key for testing). It fires only between
+takes (mid-take it re-arms). On fire: `unloadedForIdle = true`, `engine.unload()`
+off-main. `state.modelLoaded` stays true, the hotkey still starts a take.
+`beginCapture` calls `startIdleReloadIfNeeded`, which kicks off
+`transcription.loadModel` in a detached task while the user speaks; the take's
+task awaits `reloadTask.value` before decoding, so a short take pays at most the
+load time (large-v3-turbo: about 1.1 to 1.6 s on the M5 incl. warmup). A failed
+reload reports "Model failed to load" on the pill and stays evicted. Cloud models
+are never unloaded. `loadModel()` (settings apply) clears everything and re-arms.
+
+**Failure state.** `RecordingState.failed` with the reason in `statusText`; the
+pill shows it in orange for `Constants.failureResetDelay` (2.5 s). Used for empty
+results, digital silence, engine/cloud errors, a failed pasteboard write.
+
+**Post-processing.** Order is now join, strip, replace, cleanup (the Windows
+order). `stripHallucinations` is anchored: non-speech tokens anywhere, closings
+only at the end of the transcript, a lone "you" only as the whole text. The false
+sentence break regex carries the abbreviation lookbehinds; the double-period
+pattern is guarded on both sides. The vocabulary prompt is built only when the
+resolved language is "en" (`TranscriptionService.effectiveLanguage`).
+
+**Prompting guards.** `PromptRefinementService.tryModel` returns `.ok/.failed/.fatal`.
+401/402 are fatal (chain ends, `lastError` set). `finish_reason == "length"` fails.
+`isSuspectedSummary` escalates when input >= 400 chars and output < 60% of it
+(never on the last model). `max_tokens` 8192, `provider.sort = throughput`.
+The dictation controller notifies when Prompting falls back to plain text.
+
+**Capture.** `AudioCaptureService.generation` is captured by the tap closure;
+`consume` drops buffers from a retired generation (stop/cancel bump it), so
+in-flight audio from the previous take cannot land in the next one. Reserve
+30 s instead of 2 min; tap buffer 2048 frames. `RawTake.isDigitalSilence` is an
+exact-zero check (muted input), not a voice detector.
+
+**Clipboard.** The post-paste rewrite/restore runs only if the pasteboard still
+holds the pasted text (Windows 1.3.0's "never clobber a newer copy").
+
+**Notifications.** `Notifications.show` requests authorization on first use. Until
+now every error notice was silently dropped for users with "Show notification"
+off, because authorization was requested only behind that setting.
+
+**Settings.** `unloadModelWhenIdle` (lenient decode + test). `ReplacementRules`
+(TalktyKit) formats/parses the "a => b" editor text; the old row-based VM state is
+gone. `HistoryEntry.rawTranscription` (optional, old files decode) marks Prompting
+takes; `HistoryStore.remove(id:)`.
+
+**Build and release order.** `make_app.sh`/`make_dmg.sh` resolve the version as
+`TALKTY_VERSION` > exact git tag on HEAD > `version.json`. `version.json` is the
+update feed read from `main`, so bump it only after the GitHub release exists:
+tag, let the Release workflow (or a local `make_dmg.sh`) build the DMG, publish,
+then bump the feed. `Talkty --key <code> [modifiers]` posts a key press from the
+signed bundle (human-run test hook; do not drive the owner's live desktop with it).
+
+**Verified:** 134/134 tests; release build clean; smoke on large-v3-turbo with the
+trimmed prompt (220/223 tokens) transcribes the synthetic clip cleanly; the
+installed 1.5.0 launches, registers ⌥Q, loads the model in 1.6 s. **Not verified
+live:** Esc mid-transcription, the idle unload/reload cycle, the failure pill.
+Those need real takes.
