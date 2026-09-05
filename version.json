@@ -1,5 +1,5 @@
 {
-  "version": "1.4.0",
+  "version": "1.5.0",
   "download_url": "https://github.com/v2matosevic/talkty-mac/releases/latest",
-  "release_notes": "Cloud transcription + Prompting. Cloud transcription (opt-in) via OpenRouter — GPT-4o Transcribe, Whisper Large V3, Qwen3 ASR and more for higher accuracy when you want it; local Whisper stays the private, offline default. New Prompting mode: hover the recording pill and tap the sparkle to turn a dictation into a clean, structured prompt for a coding AI agent (Claude Code, Codex, Cursor), with a research-backed prompt builder and a user-selectable, fast-by-default model. Your API key is stored in the macOS Keychain, never on disk. Fixes: a crash when reopening Settings, and the repeated Keychain password prompt when using your key."
+  "release_notes": "Windows parity pass. Esc now also cancels while transcribing or building a prompt. The model's memory is freed after 15 minutes without dictation and reloads while you speak (Settings > Behavior). Failures show on the recording pill instead of vanishing. Cleanup no longer deletes a real thank you, bye or trailing you, keeps abbreviations like e.g. and vs., and the English vocabulary prompt is skipped for other languages. Text replacements are editable in Settings > Vocabulary. History keeps both halves of a Prompting take. Prompting fails fast on a bad key and escalates on truncated or summarized output; cloud transcription retries once. Auto-paste pastes via Cmd+V instead of typing key events."
 }
