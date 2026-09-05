@@ -14,12 +14,21 @@ for a in "$@"; do
         *) echo "unknown arg: $a" >&2; exit 2 ;;
     esac
 done
-VERSION="$(/usr/bin/plutil -extract version raw version.json 2>/dev/null || echo 1.0.0)"
+# Version: TALKTY_VERSION env > the exact git tag on HEAD (v1.5.0 → 1.5.0) > version.json.
+# version.json doubles as the UPDATE FEED read from main, so it is bumped only after a
+# release is published; tagging first lets the Release workflow stamp the right number.
+if [ -n "${TALKTY_VERSION:-}" ]; then
+    VERSION="$TALKTY_VERSION"
+elif TAG="$(git describe --tags --exact-match 2>/dev/null)" && [ -n "$TAG" ]; then
+    VERSION="${TAG#v}"
+else
+    VERSION="$(/usr/bin/plutil -extract version raw version.json 2>/dev/null || echo 1.0.0)"
+fi
 APP="dist/Talkty.app"
 DMG="dist/Talkty-${VERSION}.dmg"
 
 # Build + sign the app first (no --install — that's for local installs).
-[ "$NO_BUILD" = "1" ] || Scripts/make_app.sh "$CONFIG"
+[ "$NO_BUILD" = "1" ] || TALKTY_VERSION="$VERSION" Scripts/make_app.sh "$CONFIG"
 
 echo "==> Staging DMG contents…"
 STAGE="$(mktemp -d)/Talkty"

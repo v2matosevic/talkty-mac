@@ -26,17 +26,34 @@ do {
     eq(cb.getText(), nil, "empty snapshot restores to empty")
 }
 
-// MARK: TextPostProcessor
+// MARK: TextPostProcessor — segment joining
 eq(TextPostProcessor.joinSegments(["I want to build.", "a new feature"]),
    "I want to build a new feature", "false-break merge")
 eq(TextPostProcessor.joinSegments(["This is done.", "Next we start."]),
    "This is done. Next we start.", "real sentence break preserved")
 eq(TextPostProcessor.joinSegments(["So what is the best...", "...cold water"]),
    "So what is the best cold water", "segment ellipsis stripped")
-eq(TextPostProcessor.stripHallucinations("Hello there. Thanks for watching."),
-   "Hello there.", "strip 'Thanks for watching'")
-eq(TextPostProcessor.stripHallucinations("[MUSIC]"), "", "strip [MUSIC]")
-eq(TextPostProcessor.stripHallucinations("Real text ♪♪"), "Real text", "strip music notes")
+eq(TextPostProcessor.joinSegments(["just one segment"]), "just one segment", "single segment as-is")
+
+// MARK: TextPostProcessor — hallucination stripping is conservative (Windows 1.0.11 parity)
+for keep in ["I want to thank you for being here", "I need to call you", "Okay, bye.",
+             "You should subscribe.", "Thanks for listening to my idea about the feature.",
+             "Thank you.", "See you tomorrow at nine."] {
+    eq(TextPostProcessor.stripHallucinations(keep), keep, "strip keeps real speech: \(keep)")
+}
+eq(TextPostProcessor.stripHallucinations("This is my idea. Thanks for watching."), "This is my idea.", "strip trailing 'Thanks for watching'")
+eq(TextPostProcessor.stripHallucinations("Here is the plan. Thank you for listening."), "Here is the plan.", "strip trailing 'Thank you for listening'")
+eq(TextPostProcessor.stripHallucinations("Great feature. Please subscribe."), "Great feature.", "strip trailing 'Please subscribe'")
+eq(TextPostProcessor.stripHallucinations("Thanks for watching."), "", "whole-text closing → empty")
+eq(TextPostProcessor.stripHallucinations("Hello [MUSIC] world"), "Hello world", "strip [MUSIC]")
+eq(TextPostProcessor.stripHallucinations("[BLANK_AUDIO]"), "", "strip [BLANK_AUDIO] alone")
+eq(TextPostProcessor.stripHallucinations("Some text ♪♪ more text"), "Some text more text", "strip music notes")
+eq(TextPostProcessor.stripHallucinations("Hello (music) world"), "Hello world", "strip (music)")
+eq(TextPostProcessor.stripHallucinations("you"), "", "lone 'you' (silence hallucination) → empty")
+eq(TextPostProcessor.stripHallucinations("You."), "", "lone 'You.' → empty")
+eq(TextPostProcessor.stripHallucinations("Hmm..."), "Hmm...", "ellipsis is not a hallucination")
+
+// MARK: TextPostProcessor — replacements
 eq(TextPostProcessor.applyReplacements("ask cloud about it", ["cloud": "Claude"]),
    "ask Claude about it", "cloud→Claude")
 eq(TextPostProcessor.applyReplacements("Cloud is great", ["cloud": "Claude"]),
@@ -45,16 +62,48 @@ eq(TextPostProcessor.applyReplacements("write sequel queries", ["sequel": "SQL"]
    "write SQL queries", "sequel→SQL word boundary")
 eq(TextPostProcessor.applyReplacements("use sequelize orm", ["sequel": "SQL"]),
    "use sequelize orm", "sequelize untouched (word boundary)")
+eq(TextPostProcessor.applyReplacements("We use post gres here", ["post gres": "PostgreSQL"]),
+   "We use PostgreSQL here", "multi-word key")
+check(DefaultVocabulary.defaultReplacements["cloud"] == nil, "default replacements no longer rewrite 'cloud'")
+check(DefaultVocabulary.defaultReplacements["sequel"] == nil, "default replacements no longer rewrite 'sequel'")
+eq(TextPostProcessor.process(segments: ["deploy it to the AWS cloud"], replacements: DefaultVocabulary.defaultReplacements),
+   "deploy it to the AWS cloud.", "'AWS cloud' survives the defaults")
+
+// MARK: TextPostProcessor — punctuation cleanup
 eq(TextPostProcessor.cleanupPunctuation("hello world"), "hello world.", "adds terminal period")
 eq(TextPostProcessor.cleanupPunctuation("double.. period"), "double. period.", "double period collapsed")
+eq(TextPostProcessor.cleanupPunctuation("I want to build. a new feature"), "I want to build a new feature.", "false break merged")
+for abbr in ["Use e.g. the config file.", "The new one vs. the old one.", "Files, folders, etc. and so on.",
+             "That is i.e. the main point."] {
+    eq(TextPostProcessor.cleanupPunctuation(abbr), abbr, "abbreviation kept: \(abbr)")
+}
+eq(TextPostProcessor.cleanupPunctuation("Well... maybe"), "Well... maybe.", "ellipsis preserved by cleanup")
+check(TextPostProcessor.cleanupPunctuation("I wonder...").contains("..."), "trailing ellipsis preserved")
 
-let full = TextPostProcessor.process(segments: ["Let me use cloud.", "to write java script", "Thanks for watching"],
-                                     replacements: DefaultVocabulary.defaultReplacements)
-check(full.contains("Claude"), "full pipeline: Claude", full)
-check(full.contains("JavaScript"), "full pipeline: JavaScript", full)
-check(!full.lowercased().contains("thanks for watching"), "full pipeline: hallucination removed", full)
+// MARK: TextPostProcessor — full pipeline (join → strip → replace → cleanup)
+do {
+    let full = TextPostProcessor.process(segments: ["Let me use cloud.", "to write java script", "Thanks for watching"],
+                                         replacements: ["cloud": "Claude", "java script": "JavaScript"])
+    eq(full, "Let me use Claude to write JavaScript.", "full pipeline")
+    let trailing = TextPostProcessor.process(segments: ["Fix the bug in parser.", "Thank you for listening."],
+                                             replacements: [:])
+    eq(trailing, "Fix the bug in parser.", "full pipeline: trailing closing removed, terminator kept")
+    eq(TextPostProcessor.process(segments: ["you"], replacements: [:]), "", "full pipeline: silence 'you' → empty")
+}
 
-// MARK: Silence trim
+// MARK: Replacement rules editor round-trip
+do {
+    let text = "cube cuddle => kubectl\n  jay son=>JSON  \nbroken line\n=> nothing\nx =>\n"
+    let rules = ReplacementRules.parse(text)
+    eq(rules.count, 2, "rules: malformed lines ignored")
+    eq(rules["cube cuddle"], "kubectl", "rules: spaced key parsed")
+    eq(rules["jay son"], "JSON", "rules: trimmed")
+    let back = ReplacementRules.parse(ReplacementRules.format(rules))
+    eq(back, rules, "rules: format/parse round-trip")
+    eq(ReplacementRules.format(["b": "2", "A": "1"]), "A => 1\nb => 2", "rules: formatted sorted case-insensitively")
+}
+
+// MARK: Silence trim + digital silence
 do {
     var s = [Float](repeating: 0, count: 16000)
     s.append(contentsOf: (0..<16000).map { _ in Float.random(in: -0.5...0.5) })
@@ -62,6 +111,10 @@ do {
     let trimmed = AudioCaptureService.trimSilence(s)
     check(trimmed.count < s.count && trimmed.count > 16000, "silence trim bounds", "\(trimmed.count) of \(s.count)")
     eq(AudioCaptureService.trimSilence([Float](repeating: 0, count: 8000)).count, 8000, "all-silence untouched")
+
+    check(RawTake(samples: [Float](repeating: 0, count: 4800), sampleRate: 48000).isDigitalSilence, "digital silence: all zeros")
+    check(!RawTake(samples: [Float](repeating: 0.0001, count: 4800), sampleRate: 48000).isDigitalSilence, "digital silence: quiet audio is NOT silence")
+    check(!RawTake(samples: [], sampleRate: 48000).isDigitalSilence, "digital silence: empty take is not silence (handled as empty)")
 }
 
 // MARK: Settings round-trip
@@ -70,11 +123,13 @@ do {
     s.modelId = "large-v3-turbo"
     s.hotkey = HotkeyConfig(keyCode: 12, modifiers: [.option, .control])
     s.autoPaste = true
+    s.unloadModelWhenIdle = false
     let data = try JSONEncoder().encode(s)
     let back = try JSONDecoder().decode(AppSettings.self, from: data)
     eq(back.modelId, "large-v3-turbo", "settings round-trip: modelId")
     eq(back.hotkey.modifiers, [.option, .control], "settings round-trip: modifiers")
     check(back.autoPaste, "settings round-trip: autoPaste")
+    check(!back.unloadModelWhenIdle, "settings round-trip: unloadModelWhenIdle")
     eq(back.hotkey.displayString, "⌃⌥Q", "hotkey display ⌃⌥Q")
     eq(AppSettings().hotkey.displayString, "⌥Q", "default hotkey ⌥Q")
 }
@@ -92,9 +147,21 @@ do {
     check(s.duckVolumeWhileRecording, "lenient decode: present bool preserved (duck)")
     check(abs(s.volumeDuckLevel - 0.15) < 0.0001, "lenient decode: present float preserved")
     check(s.soundFeedback, "lenient decode: missing NEW key → default true")
+    check(s.unloadModelWhenIdle, "lenient decode: missing unloadModelWhenIdle → default true")
     eq(s.language, "en", "lenient decode: missing key → default")
     eq(s.hints.appLaunchCount, 7, "lenient decode: nested present key preserved")
     check(!s.hints.hasCompletedOnboarding, "lenient decode: nested missing key → default")
+}
+
+// MARK: History entries — old history.json (no rawTranscription) still decodes
+do {
+    let old = Data(#"[{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","text":"hello","timestamp":700000000,"durationSeconds":0.5}]"#.utf8)
+    let entries = try JSONDecoder().decode([HistoryEntry].self, from: old)
+    eq(entries.count, 1, "history: legacy entry decodes")
+    check(!entries[0].isPrompt, "history: legacy entry is not a prompt")
+    let prompt = HistoryEntry(text: "Rename foo to bar.", durationSeconds: 1, rawTranscription: "um rename foo to bar")
+    let back = try JSONDecoder().decode(HistoryEntry.self, from: JSONEncoder().encode(prompt))
+    check(back.isPrompt && back.rawTranscription == "um rename foo to bar", "history: prompt entry round-trips")
 }
 
 // MARK: Auto-gain
@@ -141,6 +208,24 @@ do {
     check(trimmedGained.count > 16000, "auto-gain: quiet speech survives trim", "\(trimmedGained.count)")
 }
 
+// MARK: Vocabulary prompt is English-only (no model needed: the gate runs before tokenizing)
+do {
+    let service = TranscriptionService()
+    var s = AppSettings(); s.fillDefaultsIfNeeded()
+    s.modelId = "large-v3-turbo"
+    s.language = "hr"
+    check(service.buildPrompt(s) == nil, "prompt: Croatian on a multilingual model → no English prompt")
+    s.language = "en"; s.autoDetectLanguage = true
+    check(service.buildPrompt(s) == nil, "prompt: auto-detect → no English prompt")
+    eq(TranscriptionService.effectiveLanguage(s), "auto", "effective language: auto on multilingual")
+    s.modelId = "base.en"
+    eq(TranscriptionService.effectiveLanguage(s), "en", "effective language: English-only model forces en")
+    s.autoDetectLanguage = false; s.language = "hr"
+    eq(TranscriptionService.effectiveLanguage(s), "en", "effective language: hr on English-only model → en")
+    s.useCustomVocabulary = false; s.language = "en"
+    check(service.buildPrompt(s) == nil, "prompt: vocabulary off → nil")
+}
+
 // MARK: Cloud transcription — WAV encoding
 do {
     let samples = [Float](repeating: 0.5, count: 100)
@@ -175,6 +260,16 @@ do {
 let refineEmpty = await PromptRefinementService().refine("rename foo to bar", apiKey: "")
 check(refineEmpty == nil, "refine: empty key → nil (fails safe to raw transcription)")
 
+// MARK: Prompt refinement — completeness guard thresholds
+do {
+    let short = String(repeating: "fix it ", count: 20)              // 140 chars: never guarded
+    check(!PromptRefinementService.isSuspectedSummary(input: short, output: "Fix it."), "guard: short input exempt")
+    let long = String(repeating: "and then also make sure the parser handles the empty list case ", count: 10)   // ~640 chars
+    check(PromptRefinementService.isSuspectedSummary(input: long, output: String(repeating: "x", count: 200)), "guard: 31% of input → summary")
+    check(!PromptRefinementService.isSuspectedSummary(input: long, output: String(repeating: "x", count: 500)), "guard: 78% of input → fine")
+    check(!PromptRefinementService.isSuspectedSummary(input: long, output: String(repeating: "x", count: 900)), "guard: expansion → fine")
+}
+
 // MARK: Prompting model picker + fallback chain
 do {
     eq(PromptingModels.defaultId, "google/gemini-3.1-flash-lite", "prompting: default is Gemini Flash Lite (fast)")
@@ -189,13 +284,22 @@ do {
     eq(Set(chain).count, 4, "chain: no duplicate slugs")
     // Unknown id falls back to the default order led by the default.
     eq(PromptingModels.chain(primary: "bogus/model").first, PromptingModels.defaultId, "chain: unknown → default leads")
-    // Setting round-trips and an OLD json without the key defaults to MiniMax M3.
+    // Setting round-trips and an OLD json without the key defaults to the picker default.
     var s = AppSettings(); s.promptingModelId = "google/gemini-3.1-flash-lite"
     let back = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(s))
     eq(back.promptingModelId, "google/gemini-3.1-flash-lite", "prompting: setting round-trips")
     let oldJSON = Data(#"{"modelId":"base.en"}"#.utf8)
     eq(try JSONDecoder().decode(AppSettings.self, from: oldJSON).promptingModelId,
-       PromptingModels.defaultId, "prompting: missing key → MiniMax M3 default")
+       PromptingModels.defaultId, "prompting: missing key → default model")
+}
+
+// MARK: Update version compare
+do {
+    check(UpdateService.isNewer("1.5.0", than: "1.4.0"), "update: 1.5.0 > 1.4.0")
+    check(UpdateService.isNewer("1.4.1", than: "1.4.0"), "update: patch bump")
+    check(!UpdateService.isNewer("1.4.0", than: "1.4.0"), "update: same version is not newer")
+    check(!UpdateService.isNewer("1.4", than: "1.4.0"), "update: 1.4 == 1.4.0")
+    check(UpdateService.isNewer("2.0.0", than: "1.99.99"), "update: major wins")
 }
 
 // MARK: Catalog / language resolution

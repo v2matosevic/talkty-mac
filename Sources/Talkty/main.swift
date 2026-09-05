@@ -43,6 +43,36 @@ MainActor.assumeIsolated {
         exit(0)
     }
 
+    // Test driver: `Talkty --key <keyCode> [option|command|control|shift]...` posts one
+    // key press system-wide from the signed bundle (which holds the Accessibility grant),
+    // so a script can hit the running app's hotkey (⌥Q = 12 option) or ESC (53) and
+    // exercise the real recording flow without a human at the keyboard.
+    if let i = CommandLine.arguments.firstIndex(of: "--key"),
+       CommandLine.arguments.count > i + 1, let code = UInt16(CommandLine.arguments[i + 1]) {
+        NSApplication.shared.setActivationPolicy(.prohibited)
+        var flags: CGEventFlags = []
+        for mod in CommandLine.arguments[(i + 2)...] {
+            switch mod {
+            case "option": flags.insert(.maskAlternate)
+            case "command": flags.insert(.maskCommand)
+            case "control": flags.insert(.maskControl)
+            case "shift": flags.insert(.maskShift)
+            default: break
+            }
+        }
+        let src = CGEventSource(stateID: .combinedSessionState)
+        guard let down = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true),
+              let up = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: false) else {
+            print("key: failed to create events (Accessibility?)"); exit(1)
+        }
+        down.flags = flags; up.flags = flags
+        down.post(tap: .cghidEventTap)
+        Thread.sleep(forTimeInterval: 0.05)
+        up.post(tap: .cghidEventTap)
+        print("key: posted \(code) \(flags.rawValue)")
+        exit(0)
+    }
+
     let app = NSApplication.shared
     let delegate = AppDelegate()
     app.delegate = delegate
