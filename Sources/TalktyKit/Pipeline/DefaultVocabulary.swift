@@ -17,9 +17,13 @@ public enum DefaultVocabulary {
 
     /// Post-transcription replacements. Key = what Whisper produces (case-insensitive),
     /// Value = correct replacement. Applied deterministically.
+    ///
+    /// "cloud" → "Claude" and "sequel" → "SQL" were removed from the defaults (as on
+    /// Windows 1.1.6): they rewrote legitimate speech ("AWS cloud" became "AWS Claude").
+    /// Existing installs keep their saved rules; add them back in Settings → Vocabulary.
     public static let defaultReplacements: [String: String] = [
         // AI & LLM
-        "cloud": "Claude", "claud": "Claude", "claw'd": "Claude", "claude ai": "Claude AI",
+        "claud": "Claude", "claw'd": "Claude", "claude ai": "Claude AI",
         "anthropik": "Anthropic", "chat gpt": "ChatGPT", "chatgbt": "ChatGPT",
         "open ai": "OpenAI", "olama": "Ollama", "o llama": "Ollama", "lang chain": "LangChain",
         // Frameworks & tools
@@ -33,7 +37,7 @@ public enum DefaultVocabulary {
         "kubernetes": "Kubernetes", "github": "GitHub", "git lab": "GitLab", "VS code": "VS Code",
         // Acronyms
         "eye dee ee": "IDE", "see eye dee": "CI/CD", "jay son": "JSON", "ya ml": "YAML",
-        "gee RPC": "gRPC", "sequel": "SQL",
+        "gee RPC": "gRPC",
     ]
 
     /// Curated coding/tech terms for the vocabulary prompt (and user-editable in settings).
@@ -73,4 +77,29 @@ public enum DefaultVocabulary {
         // OS & platforms
         "Ubuntu", "Debian", "Arch", "Fedora", "macOS", "Windows", "Linux", "Homebrew",
     ]
+}
+
+/// The "misheard => correct" rule text used by the Settings replacements editor, one rule
+/// per line. Lines without "=>" (or with an empty side) are ignored, so a typo never
+/// wipes the list. Lives in TalktyKit so the round-trip is unit-tested.
+public enum ReplacementRules {
+    public static let separator = "=>"
+
+    public static func format(_ rules: [String: String]) -> String {
+        rules.sorted { $0.key.lowercased() < $1.key.lowercased() }
+            .map { "\($0.key) \(separator) \($0.value)" }
+            .joined(separator: "\n")
+    }
+
+    public static func parse(_ text: String) -> [String: String] {
+        var rules: [String: String] = [:]
+        for line in text.split(whereSeparator: \.isNewline) {
+            guard let range = line.range(of: separator) else { continue }
+            let from = line[..<range.lowerBound].trimmingCharacters(in: .whitespaces)
+            let to = line[range.upperBound...].trimmingCharacters(in: .whitespaces)
+            guard !from.isEmpty, !to.isEmpty else { continue }
+            rules[from] = to
+        }
+        return rules
+    }
 }

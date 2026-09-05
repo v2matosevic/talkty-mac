@@ -11,14 +11,14 @@ public final class TranscriptionService: @unchecked Sendable {   // engine is NS
     public var isModelLoaded: Bool { engine.isLoaded }
 
     /// Load (or reload) a catalog model. Returns false if the model isn't ready.
-    /// Cloud profiles have no local file/GPU/download — "ready" means an API key is
+    /// Cloud profiles have no local file/GPU/download: "ready" means an API key is
     /// present; we free the local engine so cloud mode doesn't pin model RAM.
     @discardableResult
     public func loadModel(_ spec: ModelSpec, useGPU: Bool = true, warmup: Bool = true) -> Bool {
         if spec.isCloud {
             engine.unload()
             let ready = KeychainService.hasOpenRouterKey
-            Log.info("Cloud model selected: \(spec.id) — \(ready ? "API key present" : "NO API key")")
+            Log.info("Cloud model selected: \(spec.id), \(ready ? "API key present" : "NO API key")")
             return ready
         }
         guard spec.isDownloaded else {
@@ -39,19 +39,22 @@ public final class TranscriptionService: @unchecked Sendable {   // engine is NS
         engine.unload()
     }
 
+    /// The language whisper will actually decode with for these settings.
+    public static func effectiveLanguage(_ settings: AppSettings) -> String {
+        let model = settings.model
+        return Languages.resolve(
+            requested: settings.autoDetectLanguage && model.supportsAutoDetect ? "auto" : settings.language,
+            model: model)
+    }
+
     /// Transcribe 16 kHz mono samples into a finished result (post-processed).
     public func transcribe(samples: [Float], settings: AppSettings) -> TranscriptionResult {
         guard engine.isLoaded else { return .failure("Model not loaded") }
         guard !samples.isEmpty else { return TranscriptionResult(text: "", duration: 0) }
 
-        let model = settings.model
-        let language = Languages.resolve(
-            requested: settings.autoDetectLanguage && model.supportsAutoDetect ? "auto" : settings.language,
-            model: model)
-        let prompt = buildPrompt(settings)
-        let replacements = settings.useCustomVocabulary
-            ? (settings.textReplacements ?? DefaultVocabulary.defaultReplacements)
-            : [:]
+        let language = Self.effectiveLanguage(settings)
+        let prompt = buildPrompt(settings, language: language)
+        let replacements = Self.replacements(settings)
 
         let audioCtx = Self.experimentalAudioCtx(sampleCount: samples.count)
         let beamSize = Self.beamSize
@@ -66,6 +69,8 @@ public final class TranscriptionService: @unchecked Sendable {   // engine is NS
             Log.info("Transcribed \(samples.count) samples in \(String(format: "%.2f", dur))s (RTF \(String(format: "%.2f", rtf)))"
                 + (beamSize > 1 ? " beam=\(beamSize)" : ""))
             return TranscriptionResult(text: text, duration: dur)
+        } catch WhisperEngine.EngineError.cancelled {
+            return .cancelled
         } catch {
             Log.error("Transcription failed: \(error)")
             return .failure("\(error)")
@@ -104,23 +109,22 @@ public final class TranscriptionService: @unchecked Sendable {   // engine is NS
         let model = settings.model
         guard let slug = model.openRouterModelId else { return .failure("No cloud model selected.") }
         guard let key = KeychainService.openRouterKey else {
-            return .failure("OpenRouter API key not set — add it in Settings.")
+            return .failure("OpenRouter API key not set. Add it in Settings.")
         }
-        let language = Languages.resolve(
-            requested: settings.autoDetectLanguage && model.supportsAutoDetect ? "auto" : settings.language,
-            model: model)
+        let language = Self.effectiveLanguage(settings)
         let result = await cloud.transcribe(samples: samples, modelId: slug, language: language, apiKey: key)
         guard result.success else { return result }
 
-        let replacements = settings.useCustomVocabulary
-            ? (settings.textReplacements ?? DefaultVocabulary.defaultReplacements)
-            : [:]
-        let cleaned = TextPostProcessor.process(segments: [result.text], replacements: replacements)
+        let cleaned = TextPostProcessor.process(segments: [result.text], replacements: Self.replacements(settings))
         return TranscriptionResult(text: cleaned, duration: result.duration)
     }
 
+    private static func replacements(_ settings: AppSettings) -> [String: String] {
+        settings.useCustomVocabulary ? (settings.textReplacements ?? DefaultVocabulary.defaultReplacements) : [:]
+    }
+
     /// [EXPERIMENTAL] Size the encoder's attention window to the clip instead of the
-    /// full 30 s — the single biggest encoder-latency lever for short dictations, but
+    /// full 30 s: the single biggest encoder-latency lever for short dictations, but
     /// whisper documents the knob as quality-affecting if undersized. Off by default;
     /// A/B on real takes with (takes effect immediately, no relaunch):
     ///   defaults write hr.version2.talkty experimentalAudioCtx -bool YES
@@ -143,10 +147,16 @@ public final class TranscriptionService: @unchecked Sendable {   // engine is NS
 
     /// Natural-sentence context plus a term list, trimmed so the whole prompt fits the
     /// budget whisper honours. Over budget, whisper silently drops the HEAD of the prompt,
-    /// i.e. the context sentences, and keeps a bare comma list — the default 80-term
+    /// i.e. the context sentences, and keeps a bare comma list; the default 80-term
     /// list was ~100 tokens over. Terms are dropped from the end until it fits.
-    public func buildPrompt(_ settings: AppSettings) -> String? {
+    ///
+    /// English only: the prompt is English prose, and it biases non-English (and
+    /// auto-detect) decoding toward English tokens and prompt regurgitation. Same gate
+    /// as the Windows app since 1.1.6.
+    public func buildPrompt(_ settings: AppSettings, language: String? = nil) -> String? {
         guard settings.useCustomVocabulary else { return nil }
+        let lang = language ?? Self.effectiveLanguage(settings)
+        guard lang == "en" else { return nil }
         let terms = settings.customVocabulary ?? DefaultVocabulary.codingTerms
         if terms.isEmpty { return DefaultVocabulary.promptContext }
         var kept = Array(terms.prefix(80))
